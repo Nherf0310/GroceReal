@@ -15,7 +15,7 @@ export const clearToken = () => {
   }
 };
 
-export const apiFetch = async <T = any>(
+export const apiFetch = async <T = unknown>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> => {
@@ -27,7 +27,7 @@ export const apiFetch = async <T = any>(
 
   const token = getToken();
   if (token) {
-    headers.Authorization = `Bearer ${token}`;
+    (headers as Record<string, string>).Authorization = `Bearer ${token}`;
   }
 
   const res = await fetch(`${base}${url}`, {
