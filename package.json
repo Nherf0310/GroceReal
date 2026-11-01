@@ -23,6 +23,7 @@
     "prisma:studio": "npx prisma studio"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "dotenv": "^18.0.9",
     "prisma": "^7.10.1",
     "ts-node": "^10.9.2",
@@ -30,6 +31,8 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@prisma/client": "^7.10.1"
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "pg": "^8.23.1"
   }
 }
