@@ -3,10 +3,9 @@ import { PrismaClient, UserRole, UnitType } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Starting GroceReal seed...');
+  console.log(' Starting GroceReal seed...');
 
-  // 1. Create Demo Users
-  // In production/Phase 3, we'll hash passwords using bcrypt
+  // 1. Users: Customer, Store Manager, Driver
   const plainPasswordHash = 'mock_hashed_password_123';
 
   const customer = await prisma.user.upsert({
@@ -276,7 +275,7 @@ async function main() {
     }
   }
 
-  console.log('✅ GroceReal seed finished successfully!');
+  console.log('GroceReal seed finished successfully!');
   console.log('   Customer:', customer.email);
   console.log('   Store Manager:', manager.email);
   console.log('   Driver:', driver.email);
@@ -285,7 +284,7 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error('❌ Error during seed:', e);
+    console.error('Error during seed:', e);
     process.exit(1);
   })
   .finally(async () => {
