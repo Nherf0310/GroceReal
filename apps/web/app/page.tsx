@@ -1,6 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { useAuth } from './context/auth-context';
+import { apiFetch } from './lib/api';
 
 // Shared Enums (inlined for Phase 1 screen sketch reactivity)
 enum UserRole {
@@ -41,6 +44,68 @@ interface ProductItem {
   stock: number; // units or grams
   lowThreshold: number;
   imageUrl: string;
+}
+
+interface ApiProduct {
+  id: string;
+  name: string;
+  category?: { name?: string } | null;
+  price: number;
+  unitType?: UnitType | string;
+  unitLabel?: string;
+  inventory?: {
+    quantityInStock?: number;
+    lowStockThreshold?: number;
+  } | null;
+  imageUrl?: string | null;
+}
+
+interface DeliverySlot {
+  id: string;
+  storeId?: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  capacity: number;
+  bookedCount: number;
+}
+
+interface AddressItem {
+  id: string;
+  userId?: string;
+  label: string;
+  street: string;
+  city: string;
+  postalCode: string;
+  isDefault?: boolean;
+}
+
+interface PlacedOrder {
+  id: string;
+  status: OrderStatus;
+  itemSubtotal: number;
+  deliveryFee: number;
+  total: number;
+  paymentMethod: string;
+  deliverySlot?: {
+    date: string;
+    startTime: string;
+    endTime: string;
+  };
+  address?: {
+    street: string;
+    city: string;
+    label: string;
+  };
+  items: Array<{
+    id: string;
+    productName: string;
+    unitPrice: number;
+    unitType: UnitType;
+    unitLabel: string;
+    quantityOrdered: number;
+    lineTotal: number;
+  }>;
 }
 
 const INITIAL_PRODUCTS: ProductItem[] = [
@@ -134,29 +199,56 @@ const INITIAL_PRODUCTS: ProductItem[] = [
   },
 ];
 
-const DELIVERY_SLOTS = [
-  { id: 'slot-1', time: 'Today: 09:00 AM - 11:00 AM', capacity: 10, booked: 7 },
-  { id: 'slot-2', time: 'Today: 01:00 PM - 03:00 PM', capacity: 10, booked: 3 },
-  { id: 'slot-3', time: 'Today: 05:00 PM - 07:00 PM', capacity: 10, booked: 9 },
-  { id: 'slot-4', time: 'Tomorrow: 10:00 AM - 12:00 PM', capacity: 10, booked: 1 },
+const FALLBACK_DELIVERY_SLOTS: DeliverySlot[] = [
+  { id: 'slot-1', date: new Date().toISOString(), startTime: '09:00 AM', endTime: '11:00 AM', capacity: 10, bookedCount: 7 },
+  { id: 'slot-2', date: new Date().toISOString(), startTime: '01:00 PM', endTime: '03:00 PM', capacity: 10, bookedCount: 3 },
+  { id: 'slot-3', date: new Date().toISOString(), startTime: '05:00 PM', endTime: '07:00 PM', capacity: 10, bookedCount: 9 },
+  { id: 'slot-4', date: new Date(Date.now() + 86400000).toISOString(), startTime: '10:00 AM', endTime: '12:00 PM', capacity: 10, bookedCount: 1 },
 ];
 
 export default function GroceRealApp() {
+  const { user, logout } = useAuth();
   const [activeRole, setActiveRole] = useState<UserRole>(UserRole.CUSTOMER);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [products, setProducts] = useState<ProductItem[]>(INITIAL_PRODUCTS);
-  const [cart, setCart] = useState<{ [productId: string]: number }>({
-    'p-1': 1500, // 1500g bananas
-    'p-4': 1,    // 1 milk
-  });
+
+  // Cart state
+  const [cart, setCart] = useState<{ [productId: string]: number }>({});
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
+
+  // Store metadata state
+  const [storeId, setStoreId] = useState<string>('');
+  const [storeName, setStoreName] = useState<string>('FreshValley Supermarket');
+  const [storeAddress, setStoreAddress] = useState<string>('100 Market Sq, Downtown');
+  const [storeDeliveryFee, setStoreDeliveryFee] = useState<number>(299); // $2.99 default
+  const [storeMinOrder, setStoreMinOrder] = useState<number>(1500); // $15.00 default
+
+  // Delivery slot state
+  const [deliverySlots, setDeliverySlots] = useState<DeliverySlot[]>(FALLBACK_DELIVERY_SLOTS);
   const [selectedSlot, setSelectedSlot] = useState<string>('slot-2');
+
+  // Customer addresses state
+  const [addresses, setAddresses] = useState<AddressItem[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string>('');
+  const [isAddingAddress, setIsAddingAddress] = useState<boolean>(false);
+  const [newAddressLabel, setNewAddressLabel] = useState<string>('Home');
+  const [newAddressStreet, setNewAddressStreet] = useState<string>('');
+  const [newAddressCity, setNewAddressCity] = useState<string>('');
+  const [newAddressPostalCode, setNewAddressPostalCode] = useState<string>('');
+  const [isSavingAddress, setIsSavingAddress] = useState<boolean>(false);
+  const [addressError, setAddressError] = useState<string | null>(null);
+
+  // Order options & notes
   const [subPreference, setSubPreference] = useState<SubstitutionPreference>(
     SubstitutionPreference.ALLOW_SUBSTITUTES
   );
+  const [customerNotes, setCustomerNotes] = useState<string>('');
 
-  // Active Simulated Order State
+  // Active Order State
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [placedOrder, setPlacedOrder] = useState<PlacedOrder | null>(null);
   const [orderStatus, setOrderStatus] = useState<OrderStatus>(OrderStatus.PICKING);
   const [driverAccepted, setDriverAccepted] = useState<boolean>(false);
   const [apiHealth, setApiHealth] = useState<'checking' | 'connected' | 'disconnected'>('checking');
@@ -169,6 +261,66 @@ export default function GroceRealApp() {
     'Meat & Seafood',
     'Pantry & Staples',
   ]);
+
+  // Load delivery slots from live API
+  const loadDeliverySlots = useCallback(async (targetStoreId: string) => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+    try {
+      const res = await fetch(`${apiUrl}/stores/${targetStoreId}/delivery-slots`);
+      if (res.ok) {
+        const slots: DeliverySlot[] = await res.json();
+        if (Array.isArray(slots) && slots.length > 0) {
+          setDeliverySlots(slots);
+          const firstAvailable = slots.find((s) => s.bookedCount < s.capacity);
+          if (firstAvailable) {
+            setSelectedSlot(firstAvailable.id);
+          } else {
+            setSelectedSlot(slots[0].id);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch delivery slots from API, using fallback slots:', err);
+    }
+  }, []);
+
+  // Load user addresses if logged in
+  const loadAddresses = useCallback(async () => {
+    if (!user) {
+      setAddresses([]);
+      setSelectedAddressId('');
+      return;
+    }
+    try {
+      const list = await apiFetch<AddressItem[]>('/addresses');
+      if (Array.isArray(list) && list.length > 0) {
+        setAddresses(list);
+        const def = list.find((a) => a.isDefault) || list[0];
+        setSelectedAddressId(def.id);
+      } else {
+        setAddresses([]);
+        setSelectedAddressId('');
+      }
+    } catch (err) {
+      console.warn('Could not fetch user addresses:', err);
+    }
+  }, [user]);
+
+  // Effect to load addresses when user state changes
+  useEffect(() => {
+    let active = true;
+
+    const loadUserAddresses = async () => {
+      if (!active) return;
+      await loadAddresses();
+    };
+
+    void loadUserAddresses();
+
+    return () => {
+      active = false;
+    };
+  }, [loadAddresses]);
 
   // Check API health status and load live catalog if available
   useEffect(() => {
@@ -186,6 +338,15 @@ export default function GroceRealApp() {
       .then(async (stores) => {
         if (Array.isArray(stores) && stores.length > 0) {
           const store = stores[0];
+          setStoreId(store.id);
+          if (store.name) setStoreName(store.name);
+          if (store.address) setStoreAddress(store.address);
+          if (typeof store.deliveryFee === 'number') setStoreDeliveryFee(store.deliveryFee);
+          if (typeof store.minOrderAmount === 'number') setStoreMinOrder(store.minOrderAmount);
+
+          // Fetch delivery slots for this store
+          loadDeliverySlots(store.id);
+
           // Fetch categories
           const catRes = await fetch(`${apiUrl}/stores/${store.id}/categories`);
           const cats = await catRes.json();
@@ -195,16 +356,16 @@ export default function GroceRealApp() {
 
           // Fetch products
           const prodRes = await fetch(`${apiUrl}/stores/${store.id}/products`);
-          const prods = await prodRes.json();
+          const prods: ApiProduct[] = await prodRes.json();
           if (Array.isArray(prods) && prods.length > 0) {
             setProducts(
-              prods.map((p: any) => ({
+              prods.map((p) => ({
                 id: p.id,
                 name: p.name,
                 category: p.category?.name || 'Fresh Produce',
                 price: p.price,
-                unitType: p.unitType as UnitType,
-                unitLabel: p.unitLabel,
+                unitType: p.unitType === UnitType.WEIGHT ? UnitType.WEIGHT : UnitType.EACH,
+                unitLabel: p.unitLabel || 'each',
                 stock: p.inventory?.quantityInStock ?? 50,
                 lowThreshold: p.inventory?.lowStockThreshold ?? 10,
                 imageUrl:
@@ -218,7 +379,7 @@ export default function GroceRealApp() {
       .catch((err) => {
         console.warn('API offline or unreachable, using offline fallback preview data:', err);
       });
-  }, []);
+  }, [loadDeliverySlots]);
 
   const categories = categoryList;
 
@@ -239,10 +400,8 @@ export default function GroceRealApp() {
     return total + product.price * qty;
   }, 0);
 
-  const deliveryFee = 299; // $2.99
-  const minOrderAmount = 1500; // $15.00
-  const canCheckout = cartSubtotal >= minOrderAmount;
-  const orderTotal = cartSubtotal > 0 ? cartSubtotal + deliveryFee : 0;
+  const canCheckout = cartSubtotal >= storeMinOrder && cartSubtotal > 0;
+  const orderTotal = cartSubtotal > 0 ? cartSubtotal + storeDeliveryFee : 0;
 
   // Add/adjust item in cart
   const adjustCart = (productId: string, delta: number, isWeight: boolean) => {
@@ -259,22 +418,146 @@ export default function GroceRealApp() {
     });
   };
 
+  // Format delivery slot for display
+  const formatSlotDisplay = (s: DeliverySlot): string => {
+    try {
+      const d = new Date(s.date);
+      const dateFormatted = d.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      });
+      return `${dateFormatted}: ${s.startTime} - ${s.endTime}`;
+    } catch {
+      return `${s.startTime} - ${s.endTime}`;
+    }
+  };
+
+  // Handle saving a new address inline
+  const handleCreateAddress = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAddressStreet.trim() || !newAddressCity.trim() || !newAddressPostalCode.trim()) {
+      setAddressError('Please fill in street, city, and postal code.');
+      return;
+    }
+    setIsSavingAddress(true);
+    setAddressError(null);
+    try {
+      const created = await apiFetch<AddressItem>('/addresses', {
+        method: 'POST',
+        body: JSON.stringify({
+          label: newAddressLabel.trim() || 'Home',
+          street: newAddressStreet.trim(),
+          city: newAddressCity.trim(),
+          postalCode: newAddressPostalCode.trim(),
+          isDefault: addresses.length === 0,
+        }),
+      });
+      setAddresses((prev) => [created, ...prev]);
+      setSelectedAddressId(created.id);
+      setIsAddingAddress(false);
+      setNewAddressStreet('');
+      setNewAddressCity('');
+      setNewAddressPostalCode('');
+    } catch (err: unknown) {
+      setAddressError((err as Error).message || 'Failed to save address.');
+    } finally {
+      setIsSavingAddress(false);
+    }
+  };
+
+  // Handle real API order creation (POST /orders)
+  const handlePlaceOrder = async () => {
+    if (!user) {
+      setOrderError('You must be logged in as a Customer to place an order.');
+      return;
+    }
+
+    if (activeRole !== UserRole.CUSTOMER && user.role !== 'CUSTOMER') {
+      setOrderError('Your account role is not Customer. Please log in with a customer account.');
+      return;
+    }
+
+    if (!selectedAddressId) {
+      setOrderError('Please select or add a delivery address before placing your order.');
+      return;
+    }
+
+    if (!selectedSlot) {
+      setOrderError('Please select a delivery slot.');
+      return;
+    }
+
+    const slot = deliverySlots.find((s) => s.id === selectedSlot);
+    if (slot && slot.bookedCount >= slot.capacity) {
+      setOrderError('The selected delivery slot is fully booked. Please select another slot.');
+      return;
+    }
+
+    const items = Object.entries(cart).map(([productId, quantity]) => ({
+      productId,
+      quantity,
+    }));
+
+    if (items.length === 0) {
+      setOrderError('Your basket is empty. Please add items before checking out.');
+      return;
+    }
+
+    if (cartSubtotal < storeMinOrder) {
+      setOrderError(
+        `Order subtotal of $${(cartSubtotal / 100).toFixed(2)} does not meet the store minimum of $${(storeMinOrder / 100).toFixed(2)}.`
+      );
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    setOrderError(null);
+
+    try {
+      const order = await apiFetch<PlacedOrder>('/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          storeId: storeId || 's-1',
+          addressId: selectedAddressId,
+          deliverySlotId: selectedSlot,
+          substitutionPreference: subPreference,
+          customerNotes: customerNotes.trim() || undefined,
+          items,
+        }),
+      });
+
+      setPlacedOrder(order);
+      setOrderStatus(order.status || OrderStatus.PENDING);
+      setCart({});
+
+      // Refresh delivery slots so booked count is updated
+      if (storeId) {
+        loadDeliverySlots(storeId);
+      }
+    } catch (err: unknown) {
+      console.error('Order creation failed:', err);
+      setOrderError((err as Error).message || 'Failed to place order. Please review your cart and try again.');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
+
+  const nextSlotLabel = deliverySlots.length > 0 ? formatSlotDisplay(deliverySlots[0]) : 'Today 01:00 PM';
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800">
       {/* Top Universal Navbar */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-green-500 flex items-center justify-center shadow-md shadow-emerald-500/20 text-white font-bold text-xl">
+            <div className="w-10 h-10 rounded-xl bg-linear-to-tr from-emerald-600 to-green-500 flex items-center justify-center shadow-md shadow-emerald-500/20 text-white font-bold text-xl">
               🥬
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-xl tracking-tight text-slate-900">
                   Groce<span className="text-emerald-600">Real</span>
-                </span>
-                <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                  Phase 1 Preview
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium">Grocery Delivery Platform</p>
@@ -291,7 +574,7 @@ export default function GroceRealApp() {
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              🛒 Customer
+               Customer
             </button>
             <button
               onClick={() => setActiveRole(UserRole.STORE_MANAGER)}
@@ -301,7 +584,7 @@ export default function GroceRealApp() {
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              🏪 Store Manager
+               Store Manager
             </button>
             <button
               onClick={() => setActiveRole(UserRole.DRIVER)}
@@ -311,7 +594,7 @@ export default function GroceRealApp() {
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              🛵 Driver
+               Driver
             </button>
           </div>
 
@@ -329,6 +612,29 @@ export default function GroceRealApp() {
                 API: {apiHealth === 'connected' ? 'Port 3001 OK' : 'Ready (Offline/Dev)'}
               </span>
             </div>
+
+            {/* Auth User Status */}
+            {user ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs">
+                <span className="font-semibold text-slate-800">
+                   {user.name || user.email}
+                </span>
+                <button
+                  onClick={logout}
+                  className="text-[11px] font-medium text-slate-500 hover:text-rose-600 ml-1 transition"
+                  title="Logout"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <Link
+                href="/login"
+                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-semibold transition"
+              >
+                Sign In
+              </Link>
+            )}
 
             {/* Cart Trigger */}
             <button
@@ -353,7 +659,7 @@ export default function GroceRealApp() {
         {activeRole === UserRole.CUSTOMER && (
           <div className="space-y-6">
             {/* Store Banner */}
-            <div className="bg-gradient-to-r from-emerald-800 via-teal-900 to-slate-900 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="bg-linear-to-r from-emerald-800 via-teal-900 to-slate-900 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-semibold uppercase">
@@ -362,17 +668,17 @@ export default function GroceRealApp() {
                   <span className="text-xs text-emerald-200">★ 4.9 (1.2k+ reviews)</span>
                 </div>
                 <h1 className="text-2xl sm:text-3xl font-black tracking-tight mt-1">
-                  FreshValley Supermarket
+                  {storeName}
                 </h1>
                 <p className="text-sm text-emerald-100/80 mt-1 max-w-xl">
                   Farm-fresh produce priced by weight, artisan breads, and daily essentials delivered directly to your doorstep.
                 </p>
                 <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-emerald-200 font-medium">
-                  <span>📍 100 Market Sq, Downtown</span>
+                  <span> {storeAddress}</span>
                   <span>•</span>
-                  <span>⚡ Delivery: $2.99 (Min: $15.00)</span>
+                  <span> Delivery: ${(storeDeliveryFee / 100).toFixed(2)} (Min: ${(storeMinOrder / 100).toFixed(2)})</span>
                   <span>•</span>
-                  <span>📦 Next Slot: Today 01:00 PM</span>
+                  <span> Next Slot: {nextSlotLabel}</span>
                 </div>
               </div>
 
@@ -384,11 +690,16 @@ export default function GroceRealApp() {
                     {orderStatus.replace(/_/g, ' ')}
                   </span>
                 </div>
+                {placedOrder && (
+                  <span className="text-[11px] font-mono text-emerald-300">
+                    ID: #{placedOrder.id.slice(0, 8).toUpperCase()}
+                  </span>
+                )}
                 <button
                   onClick={() => setIsCartOpen(true)}
                   className="mt-1 px-3 py-1.5 rounded-lg bg-white text-emerald-900 text-xs font-bold hover:bg-emerald-50 transition"
                 >
-                  View Order Status Timeline →
+                  {placedOrder ? 'View Order Details →' : 'View Basket & Checkout →'}
                 </button>
               </div>
             </div>
@@ -413,7 +724,7 @@ export default function GroceRealApp() {
               </div>
 
               {/* Search Bar */}
-              <div className="relative min-w-[260px]">
+              <div className="relative min-w-260px">
                 <input
                   type="text"
                   placeholder="Search bananas, milk, eggs..."
@@ -452,7 +763,7 @@ export default function GroceRealApp() {
                               : 'bg-blue-100 text-blue-900 border border-blue-200'
                           }`}
                         >
-                          {isWeight ? '⚖️ By Weight' : '📦 Per Unit'}
+                          {isWeight ? ' By Weight' : ' Per Unit'}
                         </span>
                         {isLowStock && (
                           <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 border border-rose-200">
@@ -543,7 +854,7 @@ export default function GroceRealApp() {
                   Store Operations Dashboard
                 </span>
                 <h1 className="text-xl font-extrabold text-slate-900 mt-0.5">
-                  FreshValley Supermarket — Manager Console
+                  {storeName} — Manager Console
                 </h1>
                 <p className="text-xs text-slate-500 mt-1">
                   Manage inventory thresholds, incoming orders, and pick-and-pack fulfillment.
@@ -647,7 +958,7 @@ export default function GroceRealApp() {
                 {/* Unit item in picking */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <span className="text-lg">🥛</span>
+                    <span className="text-lg"></span>
                     <div>
                       <div className="font-bold text-sm text-slate-900">Organic Whole Milk 1 Gallon</div>
                       <div className="text-xs text-slate-500">
@@ -783,13 +1094,13 @@ export default function GroceRealApp() {
                     <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                       1. Store Pickup
                     </span>
-                    <div className="font-bold text-sm text-slate-900">FreshValley Supermarket</div>
-                    <p className="text-xs text-slate-600">100 Market Square, Downtown</p>
+                    <div className="font-bold text-sm text-slate-900">{storeName}</div>
+                    <p className="text-xs text-slate-600">{storeAddress}</p>
                     <button
                       onClick={() => setOrderStatus(OrderStatus.OUT_FOR_DELIVERY)}
                       className="mt-2 w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition"
                     >
-                      📦 Confirm Order Picked Up
+                       Confirm Order Picked Up
                     </button>
                   </div>
 
@@ -825,7 +1136,7 @@ export default function GroceRealApp() {
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
-                      From: FreshValley Supermarket ➔ To: Alice Customer (3.2 km)
+                      From: {storeName} ➔ To: Alice Customer (3.2 km)
                     </p>
                     <p className="text-xs font-bold text-emerald-700 mt-1">
                       Driver Payout: $6.50 + Cash on Delivery Collection: ${(orderTotal / 100).toFixed(2)}
@@ -853,176 +1164,475 @@ export default function GroceRealApp() {
       {/* ========================================================================= */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-xs">
-          <div className="w-full max-w-md bg-white h-full shadow-2xl flex flex-col justify-between overflow-y-auto">
-            <div className="p-5 border-b border-slate-200 flex items-center justify-between">
+          <div className="w-full max-w-md bg-white h-full shadow-2xl flex flex-col justify-between overflow-hidden">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
               <div>
-                <h3 className="font-black text-slate-900 text-lg">Your Grocery Basket</h3>
-                <span className="text-xs text-slate-500">FreshValley Supermarket</span>
+                <h3 className="font-black text-slate-900 text-lg">
+                  {placedOrder ? 'Order Confirmation' : 'Your Grocery Basket'}
+                </h3>
+                <span className="text-xs text-slate-500">{storeName}</span>
               </div>
               <button
                 onClick={() => setIsCartOpen(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 flex items-center justify-center text-sm"
+                className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 flex items-center justify-center text-sm transition"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-5 flex-1 space-y-5">
-              {/* Order Timeline Progress */}
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-2">
-                  Order Status Timeline
-                </span>
-                <div className="space-y-1.5 text-xs font-medium">
-                  {[
-                    { step: OrderStatus.PENDING, label: 'Order Received' },
-                    { step: OrderStatus.CONFIRMED, label: 'Store Confirmed' },
-                    { step: OrderStatus.PICKING, label: 'Picking & Packing' },
-                    { step: OrderStatus.READY_FOR_DELIVERY, label: 'Ready for Driver' },
-                    { step: OrderStatus.OUT_FOR_DELIVERY, label: 'Out for Delivery' },
-                    { step: OrderStatus.DELIVERED, label: 'Delivered' },
-                  ].map((item, idx) => {
-                    const isDone = orderStatus === item.step;
-                    return (
-                      <div key={idx} className="flex items-center gap-2">
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            isDone ? 'bg-emerald-600 ring-2 ring-emerald-300' : 'bg-slate-300'
-                          }`}
-                        />
-                        <span className={isDone ? 'font-bold text-emerald-800' : 'text-slate-500'}>
-                          {item.label}
-                        </span>
-                      </div>
-                    );
-                  })}
+            {/* Body */}
+            {placedOrder ? (
+              /* Order Confirmation Screen */
+              <div className="p-5 flex-1 space-y-4 overflow-y-auto">
+                <div className="text-center py-4 bg-emerald-50 rounded-2xl border border-emerald-200 p-4">
+                  <div className="w-12 h-12 bg-emerald-600 text-white rounded-full flex items-center justify-center text-2xl mx-auto shadow-md">
+                    ✓
+                  </div>
+                  <h3 className="text-lg font-black text-slate-900 mt-2">Order Created!</h3>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Your order was successfully stored in the database.
+                  </p>
+                  <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-emerald-300 text-xs font-mono font-bold text-emerald-800">
+                    <span>ID: #{placedOrder.id.slice(0, 8).toUpperCase()}</span>
+                  </div>
                 </div>
-              </div>
 
-              {/* Items List */}
-              <div className="space-y-3">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Basket Items
-                </span>
-                {Object.entries(cart).map(([pId, qty]) => {
-                  const product = products.find((p) => p.id === pId);
-                  if (!product) return null;
-                  const isWeight = product.unitType === UnitType.WEIGHT;
-                  const lineTotal = isWeight
-                    ? Math.round((product.price * qty) / 1000)
-                    : product.price * qty;
+                {/* Status Box */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Order Status
+                    </span>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      {placedOrder.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Your order is queued in store picking. You will pay cash upon arrival.
+                  </p>
+                </div>
 
-                  return (
-                    <div
-                      key={pId}
-                      className="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-white"
-                    >
-                      <div className="flex-1 pr-2">
-                        <h4 className="font-bold text-xs text-slate-900">{product.name}</h4>
-                        <span className="text-[11px] text-slate-500">
-                          {isWeight
-                            ? `${qty}g @ $${(product.price / 100).toFixed(2)}/kg`
-                            : `${qty} x $${(product.price / 100).toFixed(2)}`}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-xs text-slate-900">
-                          ${(lineTotal / 100).toFixed(2)}
-                        </div>
-                        <button
-                          onClick={() => adjustCart(pId, -1, isWeight)}
-                          className="text-[10px] text-rose-600 font-semibold hover:underline"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                {/* Delivery Info */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                    Fulfillment Summary
+                  </span>
+                  {placedOrder.address && (
+                    <div>
+                      <span className="text-slate-500 font-medium">Deliver to: </span>
+                      <strong className="text-slate-900">
+                        {placedOrder.address.label} ({placedOrder.address.street}, {placedOrder.address.city})
+                      </strong>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+                  {placedOrder.deliverySlot && (
+                    <div>
+                      <span className="text-slate-500 font-medium">Delivery Slot: </span>
+                      <strong className="text-slate-900">
+                        {new Date(placedOrder.deliverySlot.date).toLocaleDateString()} {placedOrder.deliverySlot.startTime} - {placedOrder.deliverySlot.endTime}
+                      </strong>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-slate-500 font-medium">Payment Mode: </span>
+                    <strong className="text-slate-900">Cash on Delivery (COD)</strong>
+                  </div>
+                </div>
 
-              {/* Delivery Slot Selection */}
-              <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Choose Delivery Slot
-                </span>
-                <select
-                  value={selectedSlot}
-                  onChange={(e) => setSelectedSlot(e.target.value)}
-                  className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                {/* Items snapshot */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                    Snapshot Line Items ({placedOrder.items?.length || 0})
+                  </span>
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+                    {placedOrder.items?.map((item) => (
+                      <div key={item.id} className="pt-2 first:pt-0 flex justify-between items-center text-xs">
+                        <div>
+                          <div className="font-bold text-slate-900">{item.productName}</div>
+                          <div className="text-[11px] text-slate-500">
+                            {item.unitType === UnitType.WEIGHT
+                              ? `${item.quantityOrdered}g @ $${(item.unitPrice / 100).toFixed(2)}/kg`
+                              : `${item.quantityOrdered} x $${(item.unitPrice / 100).toFixed(2)}`}
+                          </div>
+                        </div>
+                        <div className="font-bold text-slate-900">
+                          ${(item.lineTotal / 100).toFixed(2)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Pricing totals */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Items Subtotal:</span>
+                    <span className="font-semibold">${(placedOrder.itemSubtotal / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span>Delivery Fee:</span>
+                    <span className="font-semibold">${(placedOrder.deliveryFee / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-900 font-extrabold text-sm pt-1 border-t border-slate-200">
+                    <span>Total (COD):</span>
+                    <span>${(placedOrder.total / 100).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setPlacedOrder(null);
+                    setIsCartOpen(false);
+                  }}
+                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider shadow-md transition"
                 >
-                  {DELIVERY_SLOTS.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.time} ({s.capacity - s.booked} spots left)
+                  Start New Shopping Cart
+                </button>
+              </div>
+            ) : (
+              /* Regular Cart & Checkout View */
+              <div className="p-5 flex-1 space-y-5 overflow-y-auto">
+                {/* Order Timeline Progress */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-2">
+                    Order Status Timeline
+                  </span>
+                  <div className="space-y-1.5 text-xs font-medium">
+                    {[
+                      { step: OrderStatus.PENDING, label: 'Order Received' },
+                      { step: OrderStatus.CONFIRMED, label: 'Store Confirmed' },
+                      { step: OrderStatus.PICKING, label: 'Picking & Packing' },
+                      { step: OrderStatus.READY_FOR_DELIVERY, label: 'Ready for Driver' },
+                      { step: OrderStatus.OUT_FOR_DELIVERY, label: 'Out for Delivery' },
+                      { step: OrderStatus.DELIVERED, label: 'Delivered' },
+                    ].map((item, idx) => {
+                      const isDone = orderStatus === item.step;
+                      return (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              isDone ? 'bg-emerald-600 ring-2 ring-emerald-300' : 'bg-slate-300'
+                            }`}
+                          />
+                          <span className={isDone ? 'font-bold text-emerald-800' : 'text-slate-500'}>
+                            {item.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Items List */}
+                <div className="space-y-3">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    Basket Items ({Object.keys(cart).length})
+                  </span>
+                  {Object.keys(cart).length === 0 ? (
+                    <div className="p-6 text-center rounded-xl bg-slate-50 border border-slate-200 text-slate-500 text-xs">
+                      <p className="text-2xl mb-1"></p>
+                      Your grocery basket is empty.
+                      <p className="text-[11px] text-slate-400 mt-1">Browse items above to add products.</p>
+                    </div>
+                  ) : (
+                    Object.entries(cart).map(([pId, qty]) => {
+                      const product = products.find((p) => p.id === pId);
+                      if (!product) return null;
+                      const isWeight = product.unitType === UnitType.WEIGHT;
+                      const lineTotal = isWeight
+                        ? Math.round((product.price * qty) / 1000)
+                        : product.price * qty;
+
+                      return (
+                        <div
+                          key={pId}
+                          className="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-white"
+                        >
+                          <div className="flex-1 pr-2">
+                            <h4 className="font-bold text-xs text-slate-900">{product.name}</h4>
+                            <span className="text-[11px] text-slate-500">
+                              {isWeight
+                                ? `${qty}g @ $${(product.price / 100).toFixed(2)}/kg`
+                                : `${qty} x $${(product.price / 100).toFixed(2)}`}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-xs text-slate-900">
+                              ${(lineTotal / 100).toFixed(2)}
+                            </div>
+                            <button
+                              onClick={() => adjustCart(pId, -1, isWeight)}
+                              className="text-[10px] text-rose-600 font-semibold hover:underline"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Delivery Slot Selection */}
+                <div className="space-y-2">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    Choose Delivery Slot
+                  </span>
+                  <select
+                    value={selectedSlot}
+                    onChange={(e) => setSelectedSlot(e.target.value)}
+                    className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {deliverySlots.map((s) => {
+                      const spotsLeft = s.capacity - s.bookedCount;
+                      const isFull = spotsLeft <= 0;
+                      return (
+                        <option key={s.id} value={s.id} disabled={isFull}>
+                          {formatSlotDisplay(s)} {isFull ? '(Fully Booked)' : `(${spotsLeft} spots left)`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                {/* Delivery Address Selection */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      Delivery Address
+                    </span>
+                    {user && !isAddingAddress && (
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingAddress(true)}
+                        className="text-[11px] font-semibold text-emerald-600 hover:underline"
+                      >
+                        + Add New
+                      </button>
+                    )}
+                  </div>
+
+                  {!user ? (
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1.5">
+                      <p className="font-semibold">Sign in required for delivery address</p>
+                      <p className="text-[11px] text-amber-700">
+                        Please sign in with a Customer account to choose an address and complete checkout.
+                      </p>
+                      <Link
+                        href="/login"
+                        className="inline-block px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition"
+                      >
+                        Sign In Now →
+                      </Link>
+                    </div>
+                  ) : isAddingAddress || addresses.length === 0 ? (
+                    <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-slate-800">New Delivery Address</span>
+                        {addresses.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingAddress(false)}
+                            className="text-[11px] text-slate-500 hover:text-slate-800 font-medium"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+
+                      {addressError && (
+                        <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[11px]">
+                          {addressError}
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-0.5">Label</label>
+                        <input
+                          type="text"
+                          placeholder="Home, Office, Condo"
+                          value={newAddressLabel}
+                          onChange={(e) => setNewAddressLabel(e.target.value)}
+                          className="w-full p-2 text-xs rounded-lg border border-slate-200 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-slate-600 block mb-0.5">Street Address</label>
+                        <input
+                          type="text"
+                          placeholder="742 Evergreen Terrace"
+                          value={newAddressStreet}
+                          onChange={(e) => setNewAddressStreet(e.target.value)}
+                          className="w-full p-2 text-xs rounded-lg border border-slate-200 bg-white"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] font-medium text-slate-600 block mb-0.5">City</label>
+                          <input
+                            type="text"
+                            placeholder="Springfield"
+                            value={newAddressCity}
+                            onChange={(e) => setNewAddressCity(e.target.value)}
+                            className="w-full p-2 text-xs rounded-lg border border-slate-200 bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-medium text-slate-600 block mb-0.5">Postal Code</label>
+                          <input
+                            type="text"
+                            placeholder="97477"
+                            value={newAddressPostalCode}
+                            onChange={(e) => setNewAddressPostalCode(e.target.value)}
+                            className="w-full p-2 text-xs rounded-lg border border-slate-200 bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isSavingAddress}
+                        onClick={handleCreateAddress}
+                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition disabled:opacity-50"
+                      >
+                        {isSavingAddress ? 'Saving...' : 'Save & Select Address'}
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedAddressId}
+                      onChange={(e) => setSelectedAddressId(e.target.value)}
+                      className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {addresses.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}: {a.street}, {a.city} {a.isDefault ? '(Default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {/* Substitution Preference */}
+                <div className="space-y-2">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    Out-of-Stock Preference
+                  </span>
+                  <select
+                    value={subPreference}
+                    onChange={(e) =>
+                      setSubPreference(e.target.value as SubstitutionPreference)
+                    }
+                    className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value={SubstitutionPreference.ALLOW_SUBSTITUTES}>
+                      Allow Store Pickers to Substitute
                     </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Substitution Preference */}
-              <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Out-of-Stock Preference
-                </span>
-                <select
-                  value={subPreference}
-                  onChange={(e) =>
-                    setSubPreference(e.target.value as SubstitutionPreference)
-                  }
-                  className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value={SubstitutionPreference.ALLOW_SUBSTITUTES}>
-                    Allow Store Pickers to Substitute
-                  </option>
-                  <option value={SubstitutionPreference.REFUND_ITEM}>
-                    Do Not Substitute (Refund Item)
-                  </option>
-                  <option value={SubstitutionPreference.CONTACT_ME}>
-                    Call / Contact Me First
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            {/* Checkout Pricing Footer */}
-            <div className="p-5 border-t border-slate-200 bg-slate-50 space-y-3">
-              <div className="space-y-1.5 text-xs">
-                <div className="flex justify-between text-slate-600">
-                  <span>Items Subtotal:</span>
-                  <span className="font-semibold">${(cartSubtotal / 100).toFixed(2)}</span>
+                    <option value={SubstitutionPreference.REFUND_ITEM}>
+                      Do Not Substitute (Refund Item)
+                    </option>
+                    <option value={SubstitutionPreference.CONTACT_ME}>
+                      Call / Contact Me First
+                    </option>
+                  </select>
                 </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Fixed Delivery Fee:</span>
-                  <span className="font-semibold">${(deliveryFee / 100).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-slate-900 font-extrabold text-sm pt-1 border-t border-slate-200">
-                  <span>Total (Cash on Delivery):</span>
-                  <span>${(orderTotal / 100).toFixed(2)}</span>
+
+                {/* Customer Delivery Notes */}
+                <div className="space-y-2">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    Delivery Instructions (Optional)
+                  </span>
+                  <textarea
+                    rows={2}
+                    placeholder="Gate buzzer code, leave by front doorstep, etc."
+                    value={customerNotes}
+                    onChange={(e) => setCustomerNotes(e.target.value)}
+                    className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
+                  />
                 </div>
               </div>
+            )}
 
-              {!canCheckout && (
-                <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-medium">
-                  ⚠️ Minimum order is $15.00. Add $
-                  {((minOrderAmount - cartSubtotal) / 100).toFixed(2)} more to place order.
+            {/* Checkout Pricing Footer (shown only during normal checkout) */}
+            {!placedOrder && (
+              <div className="p-5 border-t border-slate-200 bg-slate-50 space-y-3 shrink-0">
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Items Subtotal:</span>
+                    <span className="font-semibold">${(cartSubtotal / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span>Fixed Delivery Fee:</span>
+                    <span className="font-semibold">${(storeDeliveryFee / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-900 font-extrabold text-sm pt-1 border-t border-slate-200">
+                    <span>Total (Cash on Delivery):</span>
+                    <span>${(orderTotal / 100).toFixed(2)}</span>
+                  </div>
                 </div>
-              )}
 
-              <button
-                disabled={!canCheckout}
-                onClick={() => {
-                  setOrderStatus(OrderStatus.CONFIRMED);
-                  alert('Order successfully submitted! Transaction created in Supabase database.');
-                }}
-                className={`w-full py-3 rounded-xl font-bold text-xs uppercase tracking-wider shadow-md transition ${
-                  canCheckout
-                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
-                    : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                }`}
-              >
-                Place Order (Cash on Delivery)
-              </button>
-            </div>
+                {!canCheckout && Object.keys(cart).length > 0 && (
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-medium">
+                     Minimum order is ${(storeMinOrder / 100).toFixed(2)}. Add $
+                    {((storeMinOrder - cartSubtotal) / 100).toFixed(2)} more to place order.
+                  </div>
+                )}
+
+                {orderError && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium flex items-start justify-between gap-2">
+                    <div>
+                      <strong className="block">Order Error</strong>
+                      {orderError}
+                    </div>
+                    <button
+                      onClick={() => setOrderError(null)}
+                      className="text-rose-500 hover:text-rose-800 font-bold"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {!user ? (
+                  <Link
+                    href="/login"
+                    className="block text-center w-full py-3 rounded-xl font-bold text-xs uppercase tracking-wider shadow-md transition bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
+                  >
+                    Sign In as Customer to Place Order
+                  </Link>
+                ) : (
+                  <button
+                    disabled={
+                      !canCheckout ||
+                      isSubmittingOrder ||
+                      Object.keys(cart).length === 0 ||
+                      !selectedAddressId ||
+                      !selectedSlot
+                    }
+                    onClick={handlePlaceOrder}
+                    className={`w-full py-3 rounded-xl font-bold text-xs uppercase tracking-wider shadow-md transition flex items-center justify-center gap-2 ${
+                      canCheckout &&
+                      !isSubmittingOrder &&
+                      Object.keys(cart).length > 0 &&
+                      selectedAddressId &&
+                      selectedSlot
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
+                        : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    {isSubmittingOrder && (
+                      <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    )}
+                    <span>
+                      {isSubmittingOrder
+                        ? 'Placing Order in Database...'
+                        : `Place Order (Cash on Delivery) — $${(orderTotal / 100).toFixed(2)}`}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
