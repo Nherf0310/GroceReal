@@ -2,10 +2,10 @@ import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
 
 export default defineConfig({
-  schema: "apps/api/src/prisma/schema.prisma",
+  schema: "apps/prisma/schema.prisma",
   migrations: {
-    path: "apps/api/src/prisma/migrations",
-    seed: "tsx apps/api/src/prisma/seed.ts",
+    path: "apps/prisma/migrations",
+    seed: "tsx apps/prisma/seed.ts",
   },
   datasource: {
     url: env("DATABASE_URL") || env("DIRECT_URL")
