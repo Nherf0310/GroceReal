@@ -46,3 +46,4 @@ Thumbs.db
 # Prisma generated SQLite fallback (if any)
 *.db
 *.db-journal
+**/prisma/generated/client/
