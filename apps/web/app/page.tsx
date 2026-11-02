@@ -641,7 +641,7 @@ export default function GroceRealApp() {
               onClick={() => setIsCartOpen(true)}
               className="relative flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs shadow-md shadow-emerald-600/20 transition-all"
             >
-              <span>Basket</span>
+              <span>Food Cart</span>
               <span className="w-5 h-5 rounded-full bg-emerald-800 text-[10px] font-bold flex items-center justify-center">
                 {Object.keys(cart).length}
               </span>
