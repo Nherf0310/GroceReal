@@ -40,30 +40,40 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // Restore session from stored JWT on client side
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1])) as {
-        sub: string;
-        email: string;
-        role: User['role'];
-      };
-      // Optional: fetch full profile for name etc.
-      apiFetch<User>('/users/me')
-        .then(profile => {
-          setUser({ ...profile, id: payload.sub, role: payload.role });
-        })
-        .catch(() => {
-          setUser({ id: payload.sub, name: '', email: payload.email, role: payload.role, isActive: true });
-        })
-        .finally(() => setLoading(false));
-    } catch {
-      clearToken();
-      setLoading(false);
-    }
+    let cancelled = false;
+
+    // Defer restoration so state updates don't run synchronously in the effect.
+    void Promise.resolve().then(async () => {
+      const token = getToken();
+      if (!token) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1])) as {
+          sub: string;
+          email: string;
+          role: User['role'];
+        };
+        try {
+          const profile = await apiFetch<User>('/users/me');
+          if (!cancelled) setUser({ ...profile, id: payload.sub, role: payload.role });
+        } catch {
+          if (!cancelled) {
+            setUser({ id: payload.sub, name: '', email: payload.email, role: payload.role, isActive: true });
+          }
+        }
+      } catch {
+        clearToken();
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = async (email: string, password: string) => {
