@@ -1,6 +1,17 @@
 import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
 
+function migrationUrl(): string | undefined {
+  const explicit = env("DIRECT_URL");
+  const pooled = env("DATABASE_URL");
+
+  if (explicit && !explicit.includes('-pooler')) return explicit;
+  if (!pooled) return explicit;
+
+  return pooled.replace('-pooler', '');
+}
+
+
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
