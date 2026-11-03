@@ -1,12 +1,23 @@
 import { PrismaClient, UserRole, UnitType } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 
-const prisma = new PrismaClient();
+// Initialize PostgreSQL pool with SSL enabled for Supabase
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+});
+
+// Pass pool to PrismaPg adapter
+const adapter = new PrismaPg(pool);
+
+// Pass adapter into PrismaClient
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  console.log('🌱 Starting GroceReal seed...');
+  console.log(' Starting GroceReal seed...');
 
-  // 1. Create Demo Users
-  // In production/Phase 3, we'll hash passwords using bcrypt
+  // 1. Users: Customer, Store Manager, Driver
   const plainPasswordHash = 'mock_hashed_password_123';
 
   const customer = await prisma.user.upsert({
@@ -276,7 +287,7 @@ async function main() {
     }
   }
 
-  console.log('✅ GroceReal seed finished successfully!');
+  console.log('GroceReal seed finished successfully!');
   console.log('   Customer:', customer.email);
   console.log('   Store Manager:', manager.email);
   console.log('   Driver:', driver.email);
@@ -285,8 +296,8 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error('❌ Error during seed:', e);
-    process.exit(1);
+    console.error('Error during seed:', e);
+    throw e;
   })
   .finally(async () => {
     await prisma.$disconnect();
