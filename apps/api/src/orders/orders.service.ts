@@ -274,6 +274,16 @@ export class OrdersService {
       }
     }
 
+    // Drivers can only view orders assigned to them or available for delivery
+    if (userRole === UserRole.DRIVER) {
+      const isAssigned = order.delivery?.driverId === userId;
+      const isAvailable =
+        order.status === OrderStatus.READY_FOR_DELIVERY && !order.delivery?.driverId;
+      if (!isAssigned && !isAvailable) {
+        throw new ForbiddenException('You do not have permission to view this order');
+      }
+    }
+
     return order;
   }
 

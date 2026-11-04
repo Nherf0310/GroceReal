@@ -21,10 +21,12 @@ enum UnitType {
 enum OrderStatus {
   PENDING
   CONFIRMED
+  REJECTED
   PICKING
   READY_FOR_DELIVERY
   OUT_FOR_DELIVERY
   DELIVERED
+  DELIVERY_FAILED
   CANCELLED
 }
 
@@ -237,14 +239,14 @@ model OrderItem {
 }
 
 model Delivery {
-  id          String         @id @default(uuid())
-  orderId     String         @unique
+  id          String    @id @default(uuid())
+  orderId     String    @unique
   driverId    String?
-  status      DeliveryStatus @default(PENDING)
+  acceptedAt  DateTime?
   pickedUpAt  DateTime?
   deliveredAt DateTime?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   driver User? @relation("DriverDeliveries", fields: [driverId], references: [id])

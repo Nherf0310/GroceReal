@@ -121,9 +121,10 @@ export interface DeliveryDto {
   id: string;
   orderId: string;
   driverId?: string | null;
-  status: DeliveryStatus;
+  acceptedAt?: string | Date | null;
   pickedUpAt?: string | Date | null;
   deliveredAt?: string | Date | null;
+  status?: DeliveryStatus;
   driver?: UserDto | null;
 }
 

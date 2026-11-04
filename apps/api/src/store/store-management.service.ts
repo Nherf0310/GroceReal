@@ -20,13 +20,15 @@ import {
 
 // Valid manager-triggered status transitions
 const MANAGER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
-  [OrderStatus.CONFIRMED]: [OrderStatus.PICKING, OrderStatus.CANCELLED],
+  [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.REJECTED],
+  [OrderStatus.CONFIRMED]: [OrderStatus.PICKING],
   [OrderStatus.PICKING]: [OrderStatus.READY_FOR_DELIVERY],
   [OrderStatus.READY_FOR_DELIVERY]: [],
   [OrderStatus.OUT_FOR_DELIVERY]: [],
   [OrderStatus.DELIVERED]: [],
   [OrderStatus.CANCELLED]: [],
+  [OrderStatus.REJECTED]: [],
+  [OrderStatus.DELIVERY_FAILED]: [],
 };
 
 @Injectable()
@@ -214,9 +216,14 @@ export class StoreManagementService {
       );
     }
 
+    const reason = dto.notes || dto.reason;
+    if (newStatus === OrderStatus.REJECTED && !reason?.trim()) {
+      throw new BadRequestException('Reason is required when rejecting an order');
+    }
+
     return this.prisma.$transaction(async (tx) => {
-      // If cancelling by store, restore stock and slot
-      if (newStatus === OrderStatus.CANCELLED) {
+      // If rejecting or cancelling by store, restore stock and slot
+      if (newStatus === OrderStatus.REJECTED || newStatus === OrderStatus.CANCELLED) {
         const items = await tx.orderItem.findMany({ where: { orderId } });
         for (const item of items) {
           await tx.inventory.update({
@@ -230,12 +237,12 @@ export class StoreManagementService {
         });
       }
 
-      // If moving to PICKING, create a Delivery record so driver can see it soon
-      if (newStatus === OrderStatus.CONFIRMED) {
+      // If moving to CONFIRMED or READY_FOR_DELIVERY, ensure Delivery record exists
+      if (newStatus === OrderStatus.CONFIRMED || newStatus === OrderStatus.READY_FOR_DELIVERY) {
         const existingDelivery = await tx.delivery.findUnique({ where: { orderId } });
         if (!existingDelivery) {
           await tx.delivery.create({
-            data: { orderId, status: 'PENDING' },
+            data: { orderId },
           });
         }
       }
@@ -248,7 +255,7 @@ export class StoreManagementService {
             create: {
               status: newStatus,
               changedByUserId: managerId,
-              notes: dto.notes ?? `Status updated to ${newStatus} by store manager`,
+              notes: reason ?? `Status updated to ${newStatus} by store manager`,
             },
           },
         },

@@ -3,18 +3,11 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { DeliveryStatus, OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
-
-const DRIVER_TRANSITIONS: Record<DeliveryStatus, DeliveryStatus[]> = {
-  [DeliveryStatus.PENDING]: [DeliveryStatus.ASSIGNED],
-  [DeliveryStatus.ASSIGNED]: [DeliveryStatus.PICKED_UP, DeliveryStatus.CANCELLED],
-  [DeliveryStatus.PICKED_UP]: [DeliveryStatus.DELIVERED],
-  [DeliveryStatus.DELIVERED]: [],
-  [DeliveryStatus.CANCELLED]: [],
-};
 
 @Injectable()
 export class DriverService {
@@ -27,7 +20,6 @@ export class DriverService {
     return this.prisma.delivery.findMany({
       where: {
         driverId: null,
-        status: DeliveryStatus.PENDING,
         order: {
           status: OrderStatus.READY_FOR_DELIVERY,
         },
@@ -67,13 +59,15 @@ export class DriverService {
   }
 
   /**
-   * Get the driver's current active delivery (ASSIGNED or PICKED_UP).
+   * Get the driver's current active delivery (READY_FOR_DELIVERY or OUT_FOR_DELIVERY).
    */
   async getActiveDelivery(driverId: string) {
     return this.prisma.delivery.findFirst({
       where: {
         driverId,
-        status: { in: [DeliveryStatus.ASSIGNED, DeliveryStatus.PICKED_UP] },
+        order: {
+          status: { in: [OrderStatus.READY_FOR_DELIVERY, OrderStatus.OUT_FOR_DELIVERY] },
+        },
       },
       include: {
         order: {
@@ -119,13 +113,15 @@ export class DriverService {
   }
 
   /**
-   * Get the driver's delivery history (DELIVERED).
+   * Get the driver's delivery history (DELIVERED or DELIVERY_FAILED).
    */
   async getDeliveryHistory(driverId: string) {
     return this.prisma.delivery.findMany({
       where: {
         driverId,
-        status: DeliveryStatus.DELIVERED,
+        order: {
+          status: { in: [OrderStatus.DELIVERED, OrderStatus.DELIVERY_FAILED] },
+        },
       },
       include: {
         order: {
@@ -137,6 +133,7 @@ export class DriverService {
               select: { id: true, name: true },
             },
             address: true,
+            statusHistory: { orderBy: { createdAt: 'desc' } },
           },
         },
       },
@@ -147,13 +144,16 @@ export class DriverService {
 
   /**
    * Driver accepts an available delivery.
+   * Assigns driverId+acceptedAt (status stays READY_FOR_DELIVERY, 409 if taken).
    */
   async acceptDelivery(driverId: string, deliveryId: string) {
     // Check if driver already has an ongoing active delivery
     const existingActive = await this.prisma.delivery.findFirst({
       where: {
         driverId,
-        status: { in: [DeliveryStatus.ASSIGNED, DeliveryStatus.PICKED_UP] },
+        order: {
+          status: { in: [OrderStatus.READY_FOR_DELIVERY, OrderStatus.OUT_FOR_DELIVERY] },
+        },
       },
     });
     if (existingActive) {
@@ -171,8 +171,9 @@ export class DriverService {
       throw new NotFoundException('Delivery not found');
     }
 
-    if (delivery.driverId !== null || delivery.status !== DeliveryStatus.PENDING) {
-      throw new BadRequestException('This delivery is no longer available');
+    // 409 Conflict if already taken
+    if (delivery.driverId !== null) {
+      throw new ConflictException('This delivery has already been accepted by another driver');
     }
 
     if (delivery.order.status !== OrderStatus.READY_FOR_DELIVERY) {
@@ -186,7 +187,7 @@ export class DriverService {
         where: { id: deliveryId },
         data: {
           driverId,
-          status: DeliveryStatus.ASSIGNED,
+          acceptedAt: new Date(),
         },
         include: {
           order: {
@@ -199,17 +200,13 @@ export class DriverService {
         },
       });
 
-      await tx.order.update({
-        where: { id: delivery.orderId },
+      // Status stays READY_FOR_DELIVERY; write OrderStatusHistory
+      await tx.orderStatusHistory.create({
         data: {
-          status: OrderStatus.OUT_FOR_DELIVERY,
-          statusHistory: {
-            create: {
-              status: OrderStatus.OUT_FOR_DELIVERY,
-              changedByUserId: driverId,
-              notes: 'Driver assigned and accepted delivery',
-            },
-          },
+          orderId: delivery.orderId,
+          status: OrderStatus.READY_FOR_DELIVERY,
+          changedByUserId: driverId,
+          notes: 'Driver accepted delivery',
         },
       });
 
@@ -218,7 +215,11 @@ export class DriverService {
   }
 
   /**
-   * Driver transitions delivery status (ASSIGNED -> PICKED_UP -> DELIVERED).
+   * Driver transitions delivery status:
+   * READY_FOR_DELIVERY -> OUT_FOR_DELIVERY (picked up)
+   * OUT_FOR_DELIVERY -> DELIVERED | DELIVERY_FAILED(reason)
+   * DELIVERED sets paymentStatus PAID.
+   * DELIVERED, CANCELLED, REJECTED, DELIVERY_FAILED are final.
    */
   async updateDeliveryStatus(
     driverId: string,
@@ -238,24 +239,52 @@ export class DriverService {
       throw new ForbiddenException('You are not assigned to this delivery');
     }
 
-    const allowed = DRIVER_TRANSITIONS[delivery.status] ?? [];
-    if (!allowed.includes(dto.status)) {
+    let targetStatus = dto.status as unknown as string;
+    if (targetStatus === 'PICKED_UP') {
+      targetStatus = OrderStatus.OUT_FOR_DELIVERY;
+    }
+    const reason = dto.notes || dto.reason;
+
+    if (delivery.order.status === OrderStatus.READY_FOR_DELIVERY) {
+      if (targetStatus !== OrderStatus.OUT_FOR_DELIVERY) {
+        throw new BadRequestException(
+          `Cannot transition order from "${delivery.order.status}" to "${targetStatus}". Order must be picked up (OUT_FOR_DELIVERY) first.`,
+        );
+      }
+    } else if (delivery.order.status === OrderStatus.OUT_FOR_DELIVERY) {
+      if (
+        targetStatus !== OrderStatus.DELIVERED &&
+        targetStatus !== OrderStatus.DELIVERY_FAILED
+      ) {
+        throw new BadRequestException(
+          `Cannot transition order from "${delivery.order.status}" to "${targetStatus}". Allowed transitions: DELIVERED, DELIVERY_FAILED.`,
+        );
+      }
+      if (targetStatus === OrderStatus.DELIVERY_FAILED && !reason?.trim()) {
+        throw new BadRequestException('Reason is required when reporting delivery failure');
+      }
+    } else {
       throw new BadRequestException(
-        `Cannot transition delivery from "${delivery.status}" to "${dto.status}". Allowed transitions: [${allowed.join(', ') || 'none'}]`,
+        `Order status "${delivery.order.status}" cannot be transitioned. DELIVERED, CANCELLED, REJECTED, and DELIVERY_FAILED are final states.`,
       );
     }
 
+    const nextOrderStatus = targetStatus as OrderStatus;
+
     return this.prisma.$transaction(async (tx) => {
-      const dataToUpdate: any = { status: dto.status };
-      if (dto.status === DeliveryStatus.PICKED_UP) {
-        dataToUpdate.pickedUpAt = new Date();
-      } else if (dto.status === DeliveryStatus.DELIVERED) {
-        dataToUpdate.deliveredAt = new Date();
+      const deliveryUpdateData: any = {};
+      if (nextOrderStatus === OrderStatus.OUT_FOR_DELIVERY) {
+        deliveryUpdateData.pickedUpAt = new Date();
+      } else if (
+        nextOrderStatus === OrderStatus.DELIVERED ||
+        nextOrderStatus === OrderStatus.DELIVERY_FAILED
+      ) {
+        deliveryUpdateData.deliveredAt = new Date();
       }
 
       const updatedDelivery = await tx.delivery.update({
         where: { id: deliveryId },
-        data: dataToUpdate,
+        data: deliveryUpdateData,
         include: {
           order: {
             include: {
@@ -267,34 +296,31 @@ export class DriverService {
         },
       });
 
-      if (dto.status === DeliveryStatus.PICKED_UP) {
-        await tx.orderStatusHistory.create({
-          data: {
-            orderId: delivery.orderId,
-            status: OrderStatus.OUT_FOR_DELIVERY,
-            changedByUserId: driverId,
-            notes: dto.notes ?? 'Driver picked up items from store',
-          },
-        });
-      } else if (dto.status === DeliveryStatus.DELIVERED) {
-        await tx.order.update({
-          where: { id: delivery.orderId },
-          data: {
-            status: OrderStatus.DELIVERED,
-            paymentStatus:
-              delivery.order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY
-                ? PaymentStatus.PAID
-                : delivery.order.paymentStatus,
-            statusHistory: {
-              create: {
-                status: OrderStatus.DELIVERED,
-                changedByUserId: driverId,
-                notes: dto.notes ?? 'Order successfully delivered to customer',
-              },
+      const orderUpdateData: any = {
+        status: nextOrderStatus,
+      };
+
+      if (nextOrderStatus === OrderStatus.DELIVERED) {
+        orderUpdateData.paymentStatus = PaymentStatus.PAID;
+      }
+
+      await tx.order.update({
+        where: { id: delivery.orderId },
+        data: {
+          ...orderUpdateData,
+          statusHistory: {
+            create: {
+              status: nextOrderStatus,
+              changedByUserId: driverId,
+              notes:
+                reason ??
+                (nextOrderStatus === OrderStatus.OUT_FOR_DELIVERY
+                  ? 'Driver picked up items from store'
+                  : 'Order successfully delivered to customer'),
             },
           },
-        });
-      }
+        },
+      });
 
       return updatedDelivery;
     });
