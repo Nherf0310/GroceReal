@@ -322,6 +322,15 @@ export default function GroceRealApp() {
     };
   }, [loadAddresses]);
 
+  // Sync active role view with logged in user's role
+  useEffect(() => {
+    if (user?.role) {
+      if (user.role === 'STORE_MANAGER') setActiveRole(UserRole.STORE_MANAGER);
+      else if (user.role === 'DRIVER') setActiveRole(UserRole.DRIVER);
+      else if (user.role === 'CUSTOMER') setActiveRole(UserRole.CUSTOMER);
+    }
+  }, [user?.role]);
+
   // Check API health status and load live catalog if available
   useEffect(() => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
