@@ -8,7 +8,8 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\""
+    "test": "tsx --test \"test/**/*.spec.ts\"",
+    "lint": "eslint \"{src,test}/**/*.ts\""
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

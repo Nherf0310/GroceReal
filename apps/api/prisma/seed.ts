@@ -1,6 +1,7 @@
 import { PrismaClient, UserRole, UnitType } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+import * as bcrypt from 'bcrypt';
 
 // Initialize PostgreSQL pool with SSL enabled for Supabase
 const pool = new Pool({
@@ -18,15 +19,17 @@ async function main() {
   console.log(' Starting GroceReal seed...');
 
   // 1. Users: Customer, Store Manager, Driver
-  const plainPasswordHash = 'mock_hashed_password_123';
+  // Demo password for all demo accounts: 'password123'
+  const DEMO_PASSWORD = 'password123';
+  const hashedPassword = await bcrypt.hash(DEMO_PASSWORD, 10);
 
   const customer = await prisma.user.upsert({
     where: { email: 'customer@grocereal.com' },
-    update: {},
+    update: { passwordHash: hashedPassword },
     create: {
       name: 'Alice Customer',
       email: 'customer@grocereal.com',
-      passwordHash: plainPasswordHash,
+      passwordHash: hashedPassword,
       phone: '+1-555-0101',
       role: UserRole.CUSTOMER,
     },
@@ -34,11 +37,11 @@ async function main() {
 
   const manager = await prisma.user.upsert({
     where: { email: 'manager@grocereal.com' },
-    update: {},
+    update: { passwordHash: hashedPassword },
     create: {
       name: 'Bob Manager',
       email: 'manager@grocereal.com',
-      passwordHash: plainPasswordHash,
+      passwordHash: hashedPassword,
       phone: '+1-555-0102',
       role: UserRole.STORE_MANAGER,
     },
@@ -46,11 +49,11 @@ async function main() {
 
   const driver = await prisma.user.upsert({
     where: { email: 'driver@grocereal.com' },
-    update: {},
+    update: { passwordHash: hashedPassword },
     create: {
       name: 'Dan Driver',
       email: 'driver@grocereal.com',
-      passwordHash: plainPasswordHash,
+      passwordHash: hashedPassword,
       phone: '+1-555-0103',
       role: UserRole.DRIVER,
     },

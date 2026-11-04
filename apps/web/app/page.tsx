@@ -208,7 +208,15 @@ const FALLBACK_DELIVERY_SLOTS: DeliverySlot[] = [
 
 export default function GroceRealApp() {
   const { user, logout } = useAuth();
-  const [activeRole, setActiveRole] = useState<UserRole>(UserRole.CUSTOMER);
+  const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
+  const activeRole =
+    selectedRole ??
+    (user?.role === 'STORE_MANAGER'
+      ? UserRole.STORE_MANAGER
+      : user?.role === 'DRIVER'
+      ? UserRole.DRIVER
+      : UserRole.CUSTOMER);
+  const setActiveRole = (role: UserRole) => setSelectedRole(role);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [products, setProducts] = useState<ProductItem[]>(INITIAL_PRODUCTS);
@@ -321,15 +329,6 @@ export default function GroceRealApp() {
       active = false;
     };
   }, [loadAddresses]);
-
-  // Sync active role view with logged in user's role
-  useEffect(() => {
-    if (user?.role) {
-      if (user.role === 'STORE_MANAGER') setActiveRole(UserRole.STORE_MANAGER);
-      else if (user.role === 'DRIVER') setActiveRole(UserRole.DRIVER);
-      else if (user.role === 'CUSTOMER') setActiveRole(UserRole.CUSTOMER);
-    }
-  }, [user?.role]);
 
   // Check API health status and load live catalog if available
   useEffect(() => {
