@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../context/auth-context';
 import { Menu, X, LogOut } from 'lucide-react';
+import CurrencyToggle from './currency-toggle';
 
 export interface NavItem {
   label: string;
@@ -100,13 +101,16 @@ export default function DashboardShell({
             Groce<span className="text-emerald-600">Real</span>
           </span>
         </div>
-        <button
-          onClick={() => setMobileOpen(true)}
-          className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition"
-          aria-label="Open menu"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <CurrencyToggle />
+          <button
+            onClick={() => setMobileOpen(true)}
+            className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition"
+            aria-label="Open menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* ── Mobile Drawer ── */}
@@ -167,8 +171,13 @@ export default function DashboardShell({
       )}
 
       {/* ── Main Content ── */}
-      <main className="flex-1 min-w-0 md:pt-0 pt-14 overflow-auto">
-        {children}
+      <main className="flex-1 min-w-0 md:pt-0 pt-14 flex flex-col overflow-auto">
+        <header className="hidden md:flex h-14 border-b border-slate-200 bg-white items-center justify-end px-6 shrink-0">
+          <CurrencyToggle />
+        </header>
+        <div className="flex-1">
+          {children}
+        </div>
       </main>
     </div>
   );
