@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/auth-context';
+import { ToastProvider } from '../context/toast-context';
 import DashboardShell, { NavItem } from '../components/dashboard-shell';
 
 const NAV_ITEMS: NavItem[] = [
@@ -13,6 +14,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Inventory', href: '/store/inventory', icon: '📋' },
   { label: 'Delivery Slots', href: '/store/slots', icon: '🕐' },
   { label: 'Store Settings', href: '/store/settings', icon: '⚙️' },
+  { label: 'Profile', href: '/store/profile', icon: '👤' },
 ];
 
 export default function StoreLayout({ children }: { children: React.ReactNode }) {
@@ -43,6 +45,10 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
 
   if (!user || user.role !== 'STORE_MANAGER') return null;
 
-  return <DashboardShell navItems={NAV_ITEMS}>{children}</DashboardShell>;
+  return (
+    <ToastProvider>
+      <DashboardShell navItems={NAV_ITEMS}>{children}</DashboardShell>
+    </ToastProvider>
+  );
 }
 
