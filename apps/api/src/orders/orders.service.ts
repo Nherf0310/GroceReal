@@ -53,6 +53,17 @@ export class OrdersService {
       throw new BadRequestException('The selected delivery slot is fully booked. Please select another slot.');
     }
 
+    // Reject slots starting in under 60 minutes
+    const now = new Date();
+    const [hours, minutes] = slot.startTime.split(':').map(Number);
+    const slotStart = new Date(slot.date);
+    slotStart.setHours(hours, minutes, 0, 0);
+    const minutesUntilStart = (slotStart.getTime() - now.getTime()) / (1000 * 60);
+
+    if (minutesUntilStart < 60) {
+      throw new BadRequestException('Cannot book a delivery slot that starts in under 60 minutes');
+    }
+
     // 4. Fetch Products and validate Stock & Pricing
     const productIds = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({

@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class StoresService {
   constructor(private prisma: PrismaService) {}
 
-  async listApprovedStores(openOnly?: boolean) {
+  async listApprovedStores(openOnly: boolean = false) {
     const where: any = { isApproved: true };
     if (openOnly) {
       where.isOpen = true;
@@ -13,30 +13,39 @@ export class StoresService {
 
     return this.prisma.store.findMany({
       where,
-      include: {
-        _count: {
-          select: {
-            categories: true,
-            products: true,
-          },
-        },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        address: true,
+        phone: true,
+        imageUrl: true,
+        isOpen: true,
+        minOrderAmount: true,
+        deliveryFee: true,
       },
       orderBy: { name: 'asc' },
     });
   }
 
   async getStoreById(id: string) {
-    const store = await this.prisma.store.findUnique({
-      where: { id },
-      include: {
-        categories: {
-          orderBy: { sortOrder: 'asc' },
-        },
+    const store = await this.prisma.store.findFirst({
+      where: { id, isApproved: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        address: true,
+        phone: true,
+        imageUrl: true,
+        isOpen: true,
+        minOrderAmount: true,
+        deliveryFee: true,
       },
     });
 
     if (!store) {
-      throw new NotFoundException(`Store with ID "${id}" not found`);
+      throw new NotFoundException(`Store with ID "${id}" not found or not approved`);
     }
 
     return store;
@@ -45,35 +54,32 @@ export class StoresService {
   async getCategories(storeId: string) {
     return this.prisma.category.findMany({
       where: { storeId },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
 
   async getProducts(
     storeId: string,
-    filters?: {
-      categoryId?: string;
-      search?: string;
-      inStockOnly?: boolean;
-    },
+    options: { categoryId?: string; search?: string; inStockOnly?: boolean },
   ) {
     const where: any = {
       storeId,
       isAvailable: true,
     };
 
-    if (filters?.categoryId && filters.categoryId !== 'All') {
-      where.categoryId = filters.categoryId;
+    if (options.categoryId) {
+      where.categoryId = options.categoryId;
     }
 
-    if (filters?.search && filters.search.trim() !== '') {
-      where.name = {
-        contains: filters.search.trim(),
-        mode: 'insensitive',
-      };
+    if (options.search) {
+      where.OR = [
+        { name: { contains: options.search, mode: 'insensitive' } },
+        { description: { contains: options.search, mode: 'insensitive' } },
+        { brand: { contains: options.search, mode: 'insensitive' } },
+      ];
     }
 
-    if (filters?.inStockOnly) {
+    if (options.inStockOnly) {
       where.inventory = {
         quantityInStock: {
           gt: 0,
@@ -119,7 +125,7 @@ export class StoresService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    return this.prisma.deliverySlot.findMany({
+    const slots = await this.prisma.deliverySlot.findMany({
       where: {
         storeId,
         date: {
@@ -130,6 +136,22 @@ export class StoresService {
         { date: 'asc' },
         { startTime: 'asc' },
       ],
+    });
+
+    const now = new Date();
+
+    // Hides full slots and slots starting in under 60 minutes
+    return slots.filter((slot) => {
+      if (slot.bookedCount >= slot.capacity) {
+        return false;
+      }
+
+      const [hours, minutes] = slot.startTime.split(':').map(Number);
+      const start = new Date(slot.date);
+      start.setHours(hours, minutes, 0, 0);
+
+      const minutesUntilStart = (start.getTime() - now.getTime()) / (1000 * 60);
+      return minutesUntilStart >= 60;
     });
   }
 }

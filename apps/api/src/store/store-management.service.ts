@@ -35,6 +35,62 @@ const MANAGER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 export class StoreManagementService {
   constructor(private prisma: PrismaService) {}
 
+  // ─── Store Overview ───────────────────────────────────────────────────────────
+
+  async getStoreOverview(managerId: string) {
+    const store = await this.getMyStore(managerId);
+
+    // 1. Order counts by status
+    const allOrders = await this.prisma.order.findMany({
+      where: { storeId: store.id },
+      select: { status: true, total: true, createdAt: true },
+    });
+
+    const orderCountsByStatus: Record<string, number> = {};
+    for (const s of Object.values(OrderStatus)) {
+      orderCountsByStatus[s] = 0;
+    }
+    for (const ord of allOrders) {
+      orderCountsByStatus[ord.status] = (orderCountsByStatus[ord.status] ?? 0) + 1;
+    }
+
+    // 2. Today's orders and revenue in cents
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const todayOrders = allOrders.filter((o) => new Date(o.createdAt) >= today);
+    const todayOrdersCount = todayOrders.length;
+    const todayRevenue = todayOrders
+      .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.REJECTED)
+      .reduce((sum, o) => sum + o.total, 0);
+
+    // 3. Low stock count
+    const allProducts = await this.prisma.product.findMany({
+      where: { storeId: store.id },
+      include: { inventory: true },
+    });
+    const lowStockCount = allProducts.filter(
+      (p) => p.inventory && p.inventory.quantityInStock <= p.inventory.lowStockThreshold,
+    ).length;
+
+    // 4. Open slots today
+    const todaySlots = await this.prisma.deliverySlot.findMany({
+      where: {
+        storeId: store.id,
+        date: today,
+      },
+    });
+    const openSlotsToday = todaySlots.filter((s) => s.bookedCount < s.capacity).length;
+
+    return {
+      orderCountsByStatus,
+      todayOrdersCount,
+      todayRevenue,
+      lowStockCount,
+      openSlotsToday,
+    };
+  }
+
   // ─── Store Profile ───────────────────────────────────────────────────────────
 
   async getMyStore(managerId: string) {
@@ -73,6 +129,15 @@ export class StoreManagementService {
   }
 
   // ─── Products ────────────────────────────────────────────────────────────────
+
+  async getStoreProducts(managerId: string) {
+    const store = await this.getMyStore(managerId);
+    return this.prisma.product.findMany({
+      where: { storeId: store.id },
+      include: { category: true, inventory: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
   async createProduct(managerId: string, dto: CreateProductDto) {
     const store = await this.getMyStore(managerId);
@@ -143,7 +208,6 @@ export class StoreManagementService {
 
   async getLowStockProducts(managerId: string) {
     const store = await this.getMyStore(managerId);
-    // Prisma doesn't support column-to-column comparisons natively, so fetch all and filter in JS.
     const products = await this.prisma.product.findMany({
       where: { storeId: store.id, isAvailable: true },
       include: { inventory: true, category: true },
@@ -155,6 +219,17 @@ export class StoreManagementService {
   }
 
   // ─── Delivery Slots ───────────────────────────────────────────────────────────
+
+  async getStoreDeliverySlots(managerId: string) {
+    const store = await this.getMyStore(managerId);
+    return this.prisma.deliverySlot.findMany({
+      where: { storeId: store.id },
+      orderBy: [
+        { date: 'desc' },
+        { startTime: 'asc' },
+      ],
+    });
+  }
 
   async createDeliverySlot(managerId: string, dto: CreateDeliverySlotDto) {
     const store = await this.getMyStore(managerId);
@@ -194,6 +269,41 @@ export class StoreManagementService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async getStoreOrderById(managerId: string, orderId: string) {
+    const store = await this.getMyStore(managerId);
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, storeId: store.id },
+      include: {
+        customer: { select: { id: true, name: true, phone: true, email: true } },
+        address: true,
+        deliverySlot: true,
+        items: {
+          include: {
+            product: true,
+            substitutedProduct: true,
+          },
+        },
+        delivery: {
+          include: {
+            driver: { select: { id: true, name: true, phone: true } },
+          },
+        },
+        statusHistory: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            changedByUser: { select: { id: true, name: true, role: true } },
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with ID "${orderId}" not found in your store`);
+    }
+
+    return order;
   }
 
   async updateOrderStatus(
@@ -247,10 +357,17 @@ export class StoreManagementService {
         }
       }
 
+      const orderData: any = {
+        status: newStatus,
+      };
+      if (newStatus === OrderStatus.REJECTED) {
+        orderData.rejectionReason = reason;
+      }
+
       const updated = await tx.order.update({
         where: { id: orderId },
         data: {
-          status: newStatus,
+          ...orderData,
           statusHistory: {
             create: {
               status: newStatus,
@@ -294,48 +411,170 @@ export class StoreManagementService {
     const item = order.items.find((i) => i.id === itemId);
     if (!item) throw new NotFoundException('Order item not found');
 
-    // If substituting, verify substitute product belongs to store
-    if (dto.substitutedProductId) {
-      const sub = await this.prisma.product.findFirst({
-        where: { id: dto.substitutedProductId, storeId: store.id, isAvailable: true },
-      });
-      if (!sub) throw new NotFoundException('Substitute product not found in your store');
-    }
-
-    // Determine the effective unit price for line total recalculation
-    let effectiveUnitPrice = item.unitPrice;
-    let effectiveUnitType = item.unitType;
-
-    if (dto.substitutedProductId) {
-      const subProduct = await this.prisma.product.findUnique({
-        where: { id: dto.substitutedProductId },
-      });
-      if (subProduct) {
-        effectiveUnitPrice = subProduct.price;
-        effectiveUnitType = subProduct.unitType;
-      }
-    }
-
-    // Recalculate line total using actual fulfilled quantity
-    let newLineTotal = 0;
-    if (effectiveUnitType === UnitType.WEIGHT) {
-      newLineTotal = Math.round((effectiveUnitPrice * dto.quantityFulfilled) / 1000);
-    } else {
-      newLineTotal = effectiveUnitPrice * dto.quantityFulfilled;
-    }
-
-    // Update item and recalculate order total
     return this.prisma.$transaction(async (tx) => {
+      // ─── Case 1: Substitution ─────────────────────────────────────────────
+      if (dto.substitutedProductId) {
+        const substitute = await tx.product.findFirst({
+          where: { id: dto.substitutedProductId, storeId: store.id },
+          include: { inventory: true },
+        });
+        if (!substitute) {
+          throw new NotFoundException('Substitute product not found in your store');
+        }
+
+        const subStock = substitute.inventory?.quantityInStock ?? 0;
+        if (subStock <= 0) {
+          throw new BadRequestException('Substitute product is out of stock');
+        }
+
+        const subQuantity = dto.substituteQuantity ?? dto.quantityFulfilled;
+        if (subStock < subQuantity) {
+          throw new BadRequestException('Insufficient stock for substitute product');
+        }
+
+        // Calculate uncapped replacement cost
+        let uncappedSubTotal = 0;
+        if (substitute.unitType === UnitType.WEIGHT) {
+          uncappedSubTotal = Math.round((substitute.price * subQuantity) / 1000);
+        } else {
+          uncappedSubTotal = substitute.price * subQuantity;
+        }
+
+        // Original line total based on ordered quantity
+        let originalLineTotal = 0;
+        if (item.unitType === UnitType.WEIGHT) {
+          originalLineTotal = Math.round((item.unitPrice * item.quantityOrdered) / 1000);
+        } else {
+          originalLineTotal = item.unitPrice * item.quantityOrdered;
+        }
+
+        // Charge replacement's price capped at the original line total
+        const finalLineTotal = Math.min(uncappedSubTotal, originalLineTotal);
+
+        // Adjust inventories: return original item's ordered quantity, deduct substitute quantity
+        await tx.inventory.update({
+          where: { productId: item.productId },
+          data: { quantityInStock: { increment: item.quantityOrdered } },
+        });
+
+        await tx.inventory.update({
+          where: { productId: substitute.id },
+          data: { quantityInStock: { decrement: subQuantity } },
+        });
+
+        // Update order item with substitute info
+        const updatedItem = await tx.orderItem.update({
+          where: { id: itemId },
+          data: {
+            quantityFulfilled: dto.quantityFulfilled,
+            substitutedProductId: substitute.id,
+            substituteQuantity: subQuantity,
+            substituteUnitPrice: substitute.price,
+            lineTotal: finalLineTotal,
+          },
+        });
+
+        // Recalculate order subtotal and total
+        const allItems = await tx.orderItem.findMany({ where: { orderId } });
+        const newSubtotal = allItems.reduce((sum, i) => sum + i.lineTotal, 0);
+        const newTotal = newSubtotal + order.deliveryFee;
+
+        await tx.order.update({
+          where: { id: orderId },
+          data: { itemSubtotal: newSubtotal, total: newTotal },
+        });
+
+        return {
+          updatedItem,
+          newSubtotal,
+          deliveryFee: order.deliveryFee,
+          newTotal,
+        };
+      }
+
+      // ─── Case 2: Weight Picking (No Substitution) ─────────────────────────
+      if (item.unitType === UnitType.WEIGHT) {
+        // Reject fulfilled weight above 110% of ordered
+        const maxAllowed = Math.floor(item.quantityOrdered * 1.1);
+        if (dto.quantityFulfilled > maxAllowed) {
+          throw new BadRequestException(
+            `Fulfilled weight (${dto.quantityFulfilled}g) exceeds 110% of ordered weight (${item.quantityOrdered}g; max allowed: ${maxAllowed}g)`,
+          );
+        }
+
+        // Adjust inventory by (ordered - fulfilled) (reject if stock would go negative)
+        const diff = item.quantityOrdered - dto.quantityFulfilled;
+        const product = await tx.product.findUnique({
+          where: { id: item.productId },
+          include: { inventory: true },
+        });
+        const currentStock = product?.inventory?.quantityInStock ?? 0;
+        if (currentStock + diff < 0) {
+          throw new BadRequestException('Insufficient inventory to fulfill requested weight');
+        }
+
+        if (diff !== 0) {
+          await tx.inventory.update({
+            where: { productId: item.productId },
+            data: { quantityInStock: { increment: diff } },
+          });
+        }
+
+        // Recalculate line total = grams x price per kg / 1000 rounded to cents
+        const newLineTotal = Math.round((item.unitPrice * dto.quantityFulfilled) / 1000);
+
+        const updatedItem = await tx.orderItem.update({
+          where: { id: itemId },
+          data: {
+            quantityFulfilled: dto.quantityFulfilled,
+            lineTotal: newLineTotal,
+          },
+        });
+
+        const allItems = await tx.orderItem.findMany({ where: { orderId } });
+        const newSubtotal = allItems.reduce((sum, i) => sum + i.lineTotal, 0);
+        const newTotal = newSubtotal + order.deliveryFee;
+
+        await tx.order.update({
+          where: { id: orderId },
+          data: { itemSubtotal: newSubtotal, total: newTotal },
+        });
+
+        return {
+          updatedItem,
+          newSubtotal,
+          deliveryFee: order.deliveryFee,
+          newTotal,
+        };
+      }
+
+      // ─── Case 3: Unit Type EACH (No Substitution) ──────────────────────────
+      const diff = item.quantityOrdered - dto.quantityFulfilled;
+      const product = await tx.product.findUnique({
+        where: { id: item.productId },
+        include: { inventory: true },
+      });
+      const currentStock = product?.inventory?.quantityInStock ?? 0;
+      if (currentStock + diff < 0) {
+        throw new BadRequestException('Insufficient inventory to fulfill requested quantity');
+      }
+
+      if (diff !== 0) {
+        await tx.inventory.update({
+          where: { productId: item.productId },
+          data: { quantityInStock: { increment: diff } },
+        });
+      }
+
+      const newLineTotal = item.unitPrice * dto.quantityFulfilled;
       const updatedItem = await tx.orderItem.update({
         where: { id: itemId },
         data: {
           quantityFulfilled: dto.quantityFulfilled,
-          substitutedProductId: dto.substitutedProductId ?? item.substitutedProductId,
           lineTotal: newLineTotal,
         },
       });
 
-      // Recalculate whole order subtotal from all items' current lineTotals
       const allItems = await tx.orderItem.findMany({ where: { orderId } });
       const newSubtotal = allItems.reduce((sum, i) => sum + i.lineTotal, 0);
       const newTotal = newSubtotal + order.deliveryFee;

@@ -30,6 +30,12 @@ export enum DeliveryStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum DeliveryFailureReason {
+  CUSTOMER_UNAVAILABLE = 'CUSTOMER_UNAVAILABLE',
+  WRONG_ADDRESS = 'WRONG_ADDRESS',
+  OTHER = 'OTHER',
+}
+
 export enum SubstitutionPreference {
   ALLOW_SUBSTITUTES = 'ALLOW_SUBSTITUTES',
   REFUND_ITEM = 'REFUND_ITEM',

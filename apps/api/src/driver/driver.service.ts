@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus, DeliveryFailureReason } from '@prisma/client';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 
 @Injectable()
@@ -15,9 +15,10 @@ export class DriverService {
 
   /**
    * List available deliveries ready for pickup that have not been assigned to any driver.
+   * Returns store name and address, drop-off address, item count, total.
    */
   async getAvailableDeliveries() {
-    return this.prisma.delivery.findMany({
+    const deliveries = await this.prisma.delivery.findMany({
       where: {
         driverId: null,
         order: {
@@ -56,6 +57,15 @@ export class DriverService {
       },
       orderBy: { createdAt: 'asc' },
     });
+
+    return deliveries.map((d) => ({
+      ...d,
+      storeName: d.order.store.name,
+      storeAddress: d.order.store.address,
+      dropOffAddress: d.order.address ? `${d.order.address.street}, ${d.order.address.city}` : '',
+      itemCount: d.order.items.length,
+      total: d.order.total,
+    }));
   }
 
   /**
@@ -243,7 +253,7 @@ export class DriverService {
     if (targetStatus === 'PICKED_UP') {
       targetStatus = OrderStatus.OUT_FOR_DELIVERY;
     }
-    const reason = dto.notes || dto.reason;
+    const reason = dto.notes || dto.reason || dto.failureNote;
 
     if (delivery.order.status === OrderStatus.READY_FOR_DELIVERY) {
       if (targetStatus !== OrderStatus.OUT_FOR_DELIVERY) {
@@ -260,7 +270,7 @@ export class DriverService {
           `Cannot transition order from "${delivery.order.status}" to "${targetStatus}". Allowed transitions: DELIVERED, DELIVERY_FAILED.`,
         );
       }
-      if (targetStatus === OrderStatus.DELIVERY_FAILED && !reason?.trim()) {
+      if (targetStatus === OrderStatus.DELIVERY_FAILED && !reason?.trim() && !dto.failureReason) {
         throw new BadRequestException('Reason is required when reporting delivery failure');
       }
     } else {
@@ -273,13 +283,25 @@ export class DriverService {
 
     return this.prisma.$transaction(async (tx) => {
       const deliveryUpdateData: any = {};
+      let failureReason: DeliveryFailureReason | null = null;
+      let failureNote: string | null = null;
+
       if (nextOrderStatus === OrderStatus.OUT_FOR_DELIVERY) {
         deliveryUpdateData.pickedUpAt = new Date();
-      } else if (
-        nextOrderStatus === OrderStatus.DELIVERED ||
-        nextOrderStatus === OrderStatus.DELIVERY_FAILED
-      ) {
+      } else if (nextOrderStatus === OrderStatus.DELIVERED) {
         deliveryUpdateData.deliveredAt = new Date();
+      } else if (nextOrderStatus === OrderStatus.DELIVERY_FAILED) {
+        deliveryUpdateData.deliveredAt = new Date();
+        failureReason = dto.failureReason ?? (
+          dto.reason === 'CUSTOMER_UNAVAILABLE' || dto.notes === 'CUSTOMER_UNAVAILABLE'
+            ? DeliveryFailureReason.CUSTOMER_UNAVAILABLE
+            : dto.reason === 'WRONG_ADDRESS' || dto.notes === 'WRONG_ADDRESS'
+            ? DeliveryFailureReason.WRONG_ADDRESS
+            : DeliveryFailureReason.OTHER
+        );
+        failureNote = dto.failureNote ?? reason ?? null;
+        deliveryUpdateData.failureReason = failureReason;
+        deliveryUpdateData.failureNote = failureNote;
       }
 
       const updatedDelivery = await tx.delivery.update({
@@ -304,6 +326,12 @@ export class DriverService {
         orderUpdateData.paymentStatus = PaymentStatus.PAID;
       }
 
+      const historyNotes = nextOrderStatus === OrderStatus.DELIVERY_FAILED
+        ? (failureNote ? `${failureReason}: ${failureNote}` : `${failureReason}`)
+        : (reason ?? (nextOrderStatus === OrderStatus.OUT_FOR_DELIVERY
+            ? 'Driver picked up items from store'
+            : 'Order successfully delivered to customer'));
+
       await tx.order.update({
         where: { id: delivery.orderId },
         data: {
@@ -312,11 +340,7 @@ export class DriverService {
             create: {
               status: nextOrderStatus,
               changedByUserId: driverId,
-              notes:
-                reason ??
-                (nextOrderStatus === OrderStatus.OUT_FOR_DELIVERY
-                  ? 'Driver picked up items from store'
-                  : 'Order successfully delivered to customer'),
+              notes: historyNotes,
             },
           },
         },

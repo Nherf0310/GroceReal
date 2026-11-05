@@ -38,6 +38,12 @@ enum DeliveryStatus {
   CANCELLED
 }
 
+enum DeliveryFailureReason {
+  CUSTOMER_UNAVAILABLE
+  WRONG_ADDRESS
+  OTHER
+}
+
 enum SubstitutionPreference {
   ALLOW_SUBSTITUTES
   REFUND_ITEM
@@ -195,6 +201,7 @@ model Order {
   addressId              String
   deliverySlotId         String
   status                 OrderStatus            @default(PENDING)
+  rejectionReason        String?
   substitutionPreference SubstitutionPreference @default(ALLOW_SUBSTITUTES)
   customerNotes          String?
   itemSubtotal           Int                    // in cents
@@ -227,6 +234,8 @@ model OrderItem {
   quantityOrdered      Int      // count for EACH, grams for WEIGHT
   quantityFulfilled    Int      // count for EACH, grams for WEIGHT
   substitutedProductId String?
+  substituteQuantity   Int?
+  substituteUnitPrice  Int?
   lineTotal            Int      // Snapshot in cents
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -239,14 +248,16 @@ model OrderItem {
 }
 
 model Delivery {
-  id          String    @id @default(uuid())
-  orderId     String    @unique
-  driverId    String?
-  acceptedAt  DateTime?
-  pickedUpAt  DateTime?
-  deliveredAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String                 @id @default(uuid())
+  orderId       String                 @unique
+  driverId      String?
+  acceptedAt    DateTime?
+  pickedUpAt    DateTime?
+  deliveredAt   DateTime?
+  failureReason DeliveryFailureReason?
+  failureNote   String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
 
   order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   driver User? @relation("DriverDeliveries", fields: [driverId], references: [id])

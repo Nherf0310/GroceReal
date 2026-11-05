@@ -173,4 +173,9 @@ export class FulfillOrderItemDto {
   @IsOptional()
   @IsString()
   substitutedProductId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  substituteQuantity?: number;
 }
