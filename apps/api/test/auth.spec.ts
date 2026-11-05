@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { AuthService } from '../src/auth/auth.service';
