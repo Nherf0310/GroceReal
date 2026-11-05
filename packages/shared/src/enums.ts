@@ -13,10 +13,12 @@ export enum UnitType {
 export enum OrderStatus {
   PENDING = 'PENDING',
   CONFIRMED = 'CONFIRMED',
+  REJECTED = 'REJECTED',
   PICKING = 'PICKING',
   READY_FOR_DELIVERY = 'READY_FOR_DELIVERY',
   OUT_FOR_DELIVERY = 'OUT_FOR_DELIVERY',
   DELIVERED = 'DELIVERED',
+  DELIVERY_FAILED = 'DELIVERY_FAILED',
   CANCELLED = 'CANCELLED',
 }
 
@@ -26,6 +28,12 @@ export enum DeliveryStatus {
   PICKED_UP = 'PICKED_UP',
   DELIVERED = 'DELIVERED',
   CANCELLED = 'CANCELLED',
+}
+
+export enum DeliveryFailureReason {
+  CUSTOMER_UNAVAILABLE = 'CUSTOMER_UNAVAILABLE',
+  WRONG_ADDRESS = 'WRONG_ADDRESS',
+  OTHER = 'OTHER',
 }
 
 export enum SubstitutionPreference {

@@ -32,6 +32,13 @@ import {
 export class StoreManagementController {
   constructor(private readonly svc: StoreManagementService) {}
 
+  // ─── Store Overview ───────────────────────────────────────────────────────────
+
+  @Get('overview')
+  getStoreOverview(@Request() req: any) {
+    return this.svc.getStoreOverview(req.user.id);
+  }
+
   // ─── Store Profile ────────────────────────────────────────────────────────────
 
   @Get('me')
@@ -61,6 +68,11 @@ export class StoreManagementController {
   }
 
   // ─── Products ─────────────────────────────────────────────────────────────────
+
+  @Get('products')
+  getStoreProducts(@Request() req: any) {
+    return this.svc.getStoreProducts(req.user.id);
+  }
 
   @Post('products')
   createProduct(@Request() req: any, @Body() dto: CreateProductDto) {
@@ -94,6 +106,11 @@ export class StoreManagementController {
 
   // ─── Delivery Slots ───────────────────────────────────────────────────────────
 
+  @Get('delivery-slots')
+  getStoreDeliverySlots(@Request() req: any) {
+    return this.svc.getStoreDeliverySlots(req.user.id);
+  }
+
   @Post('delivery-slots')
   createDeliverySlot(@Request() req: any, @Body() dto: CreateDeliverySlotDto) {
     return this.svc.createDeliverySlot(req.user.id, dto);
@@ -104,6 +121,11 @@ export class StoreManagementController {
   @Get('orders')
   getStoreOrders(@Request() req: any, @Query('status') status?: string) {
     return this.svc.getStoreOrders(req.user.id, status);
+  }
+
+  @Get('orders/:id')
+  getStoreOrderById(@Request() req: any, @Param('id') id: string) {
+    return this.svc.getStoreOrderById(req.user.id, id);
   }
 
   @Patch('orders/:id/status')

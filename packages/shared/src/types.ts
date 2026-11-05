@@ -3,6 +3,7 @@ import {
   UnitType,
   OrderStatus,
   DeliveryStatus,
+  DeliveryFailureReason,
   SubstitutionPreference,
   PaymentMethod,
   PaymentStatus,
@@ -103,6 +104,8 @@ export interface OrderItemDto {
   quantityOrdered: number; // units or grams
   quantityFulfilled: number;
   substitutedProductId?: string | null;
+  substituteQuantity?: number | null;
+  substituteUnitPrice?: number | null;
   lineTotal: number; // in cents
   product?: ProductDto | null;
   substitutedProduct?: ProductDto | null;
@@ -121,9 +124,12 @@ export interface DeliveryDto {
   id: string;
   orderId: string;
   driverId?: string | null;
-  status: DeliveryStatus;
+  acceptedAt?: string | Date | null;
   pickedUpAt?: string | Date | null;
   deliveredAt?: string | Date | null;
+  failureReason?: DeliveryFailureReason | null;
+  failureNote?: string | null;
+  status?: DeliveryStatus;
   driver?: UserDto | null;
 }
 
@@ -134,6 +140,7 @@ export interface OrderDto {
   addressId: string;
   deliverySlotId: string;
   status: OrderStatus;
+  rejectionReason?: string | null;
   substitutionPreference: SubstitutionPreference;
   customerNotes?: string | null;
   itemSubtotal: number; // in cents

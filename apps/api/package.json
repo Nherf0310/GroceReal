@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "build": "npx prisma generate && nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\""
+    "test": "tsx --test \"test/**/*.spec.ts\"",
+    "lint": "eslint \"{src,test}/**/*.ts\""
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

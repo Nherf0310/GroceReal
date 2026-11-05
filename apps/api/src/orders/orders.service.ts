@@ -53,6 +53,17 @@ export class OrdersService {
       throw new BadRequestException('The selected delivery slot is fully booked. Please select another slot.');
     }
 
+    // Reject slots starting in under 60 minutes
+    const now = new Date();
+    const [hours, minutes] = slot.startTime.split(':').map(Number);
+    const slotStart = new Date(slot.date);
+    slotStart.setHours(hours, minutes, 0, 0);
+    const minutesUntilStart = (slotStart.getTime() - now.getTime()) / (1000 * 60);
+
+    if (minutesUntilStart < 60) {
+      throw new BadRequestException('Cannot book a delivery slot that starts in under 60 minutes');
+    }
+
     // 4. Fetch Products and validate Stock & Pricing
     const productIds = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
@@ -271,6 +282,16 @@ export class OrdersService {
       });
       if (!store) {
         throw new ForbiddenException('You do not manage the store associated with this order');
+      }
+    }
+
+    // Drivers can only view orders assigned to them or available for delivery
+    if (userRole === UserRole.DRIVER) {
+      const isAssigned = order.delivery?.driverId === userId;
+      const isAvailable =
+        order.status === OrderStatus.READY_FOR_DELIVERY && !order.delivery?.driverId;
+      if (!isAssigned && !isAvailable) {
+        throw new ForbiddenException('You do not have permission to view this order');
       }
     }
 
