@@ -178,3 +178,4 @@ export default function ProductCard({ product, store }: ProductCardProps) {
     </div>
   );
 }
+

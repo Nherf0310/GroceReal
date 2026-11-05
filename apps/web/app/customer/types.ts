@@ -196,3 +196,4 @@ export interface BasketItem {
   product: Product;
   quantity: number; // count for EACH, grams for WEIGHT
 }
+
