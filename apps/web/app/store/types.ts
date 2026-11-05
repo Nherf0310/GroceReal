@@ -29,11 +29,12 @@ export interface Customer {
 export interface Address {
   id: string;
   label?: string | null;
-  line1: string;
-  line2?: string | null;
+  street: string;
   city: string;
-  province?: string | null;
   postalCode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  isDefault?: boolean;
 }
 
 export interface DeliverySlot {
@@ -104,14 +105,16 @@ export interface StoreOrder {
   itemSubtotal: number; // cents
   deliveryFee: number; // cents
   paymentMethod?: string | null;
+  paymentStatus?: string | null;
+  customerNotes?: string | null;
   notes?: string | null;
   substitutionPreference?: string | null;
   rejectionReason?: string | null;
-  customer: Customer;
-  address: Address;
-  deliverySlot: DeliverySlot;
-  items: OrderItem[];
-  statusHistory: StatusHistoryEntry[];
+  customer?: Customer;
+  address?: Address;
+  deliverySlot?: DeliverySlot;
+  items?: OrderItem[];
+  statusHistory?: StatusHistoryEntry[];
   delivery?: Delivery | null;
 }
 

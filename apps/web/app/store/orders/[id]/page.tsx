@@ -34,8 +34,8 @@ function isFinal(status: OrderStatus) {
 
 // ── Status Timeline ─────────────────────────────────────────────────────────
 
-function StatusTimeline({ history }: { history: StoreOrder['statusHistory'] }) {
-  if (!history.length) return null;
+function StatusTimeline({ history }: { history?: StoreOrder['statusHistory'] }) {
+  if (!history || !history.length) return null;
   const sorted = [...history].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
@@ -57,12 +57,14 @@ function StatusTimeline({ history }: { history: StoreOrder['statusHistory'] }) {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <StatusBadge status={entry.status} />
-                <span className="text-xs text-slate-400">{timeAgo(entry.createdAt)}</span>
+                <span className="text-xs text-slate-400">
+                  {entry.createdAt ? timeAgo(entry.createdAt) : ''}
+                </span>
               </div>
               {entry.notes && (
                 <p className="text-xs text-slate-500 mt-0.5 truncate">{entry.notes}</p>
               )}
-              {entry.changedByUser && (
+              {entry.changedByUser?.name && (
                 <p className="text-xs text-slate-400 mt-0.5">by {entry.changedByUser.name}</p>
               )}
             </div>
@@ -84,9 +86,9 @@ function ItemRow({
   orderId: string;
   onSaved: () => Promise<void>;
 }) {
-  const isWeight = item.unitType === 'WEIGHT';
-  const [qty, setQty] = useState(item.quantityFulfilled ?? item.quantityOrdered);
-  const [savedQty, setSavedQty] = useState(item.quantityFulfilled ?? item.quantityOrdered);
+  const isWeight = item?.unitType === 'WEIGHT';
+  const [qty, setQty] = useState(item?.quantityFulfilled ?? item?.quantityOrdered ?? 0);
+  const [savedQty, setSavedQty] = useState(item?.quantityFulfilled ?? item?.quantityOrdered ?? 0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [itemError, setItemError] = useState<string | null>(null);
@@ -94,6 +96,7 @@ function ItemRow({
   const isDirty = qty !== savedQty;
 
   const handleSave = async () => {
+    if (!item?.id) return;
     setSaving(true);
     setItemError(null);
     try {
@@ -112,15 +115,17 @@ function ItemRow({
     }
   };
 
-  const displayUnit = isWeight ? 'g' : item.product.unitLabel;
+  const displayUnit = isWeight ? 'g' : (item?.product?.unitLabel || 'item');
 
   return (
     <li className="px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-slate-900 truncate">{item.product.name}</div>
+        <div className="text-sm font-medium text-slate-900 truncate">
+          {item?.product?.name || 'Unknown item'}
+        </div>
         <div className="text-xs text-slate-500 mt-0.5">
-          Ordered: {item.quantityOrdered} {displayUnit}
-          {item.substitutedProduct && (
+          Ordered: {item?.quantityOrdered ?? 0} {displayUnit}
+          {item?.substitutedProduct && (
             <span className="ml-2 text-amber-600">
               → Sub: {item.substitutedProduct.name}
             </span>
@@ -133,7 +138,7 @@ function ItemRow({
         <input
           type="number"
           min={0}
-          max={isWeight ? Math.floor(item.quantityOrdered * 1.1) : item.quantityOrdered}
+          max={isWeight ? Math.floor((item?.quantityOrdered ?? 0) * 1.1) : (item?.quantityOrdered ?? 0)}
           value={qty}
           onChange={(e) => {
             setQty(Number(e.target.value));
@@ -204,25 +209,24 @@ export default function OrderWorkbenchPage() {
 
   // Don't re-fetch when user is editing
   const handleItemSaved = useCallback(async () => {
-    // silent refresh after save
+    // refresh after save
     try {
-      const data = await apiFetch<StoreOrder>(`/store/orders/${id}`);
-      setOrder(data);
+      await fetchOrder();
     } catch {
       // ignore
     }
-  }, [id]);
+  }, [fetchOrder]);
 
   const patchStatus = useCallback(
     async (status: string, extra?: Record<string, string>) => {
       setActionPending(true);
       setActionError(null);
       try {
-        const updated = await apiFetch<StoreOrder>(`/store/orders/${id}/status`, {
+        await apiFetch(`/store/orders/${id}/status`, {
           method: 'PATCH',
           body: JSON.stringify({ status, ...extra }),
         });
-        setOrder(updated);
+        await fetchOrder();
       } catch (e: unknown) {
         const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Action failed';
         setActionError(msg);
@@ -232,7 +236,7 @@ export default function OrderWorkbenchPage() {
         setReasonModal(null);
       }
     },
-    [id]
+    [id, fetchOrder]
   );
 
   if (loading) {
@@ -264,15 +268,16 @@ export default function OrderWorkbenchPage() {
 
   const slot = order.deliverySlot;
   const slotStr = slot
-    ? `${new Date(slot.date).toLocaleDateString()} ${slot.startTime}–${slot.endTime}`
+    ? `${slot.date ? new Date(slot.date).toLocaleDateString() : ''} ${slot.startTime || ''}–${slot.endTime || ''}`.trim() || '—'
     : '—';
 
-  const total = convert(order.total, BASE_CURRENCY, currency);
-  const subtotal = convert(order.itemSubtotal, BASE_CURRENCY, currency);
-  const deliveryFee = convert(order.deliveryFee, BASE_CURRENCY, currency);
+  const total = convert(order.total ?? 0, BASE_CURRENCY, currency);
+  const subtotal = convert(order.itemSubtotal ?? 0, BASE_CURRENCY, currency);
+  const deliveryFee = convert(order.deliveryFee ?? 0, BASE_CURRENCY, currency);
 
   // For PICKING: check if all items have been handled (quantityFulfilled set)
-  const allItemsHandled = order.items.every((item) => item.quantityFulfilled !== undefined && item.quantityFulfilled !== null);
+  const items = order.items ?? [];
+  const allItemsHandled = items.length > 0 && items.every((item) => item.quantityFulfilled !== undefined && item.quantityFulfilled !== null);
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-3xl">
@@ -292,7 +297,7 @@ export default function OrderWorkbenchPage() {
             <StatusBadge status={order.status} />
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Placed {timeAgo(order.createdAt)} · {new Date(order.createdAt).toLocaleString()}
+            Placed {order.createdAt ? `${timeAgo(order.createdAt)} · ${new Date(order.createdAt).toLocaleString()}` : '—'}
           </p>
         </div>
         <button
@@ -321,11 +326,13 @@ export default function OrderWorkbenchPage() {
             <User className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
             <div>
               <div className="text-xs text-slate-500">Customer</div>
-              <div className="text-sm font-medium text-slate-900">{order.customer.name}</div>
-              <div className="text-xs text-slate-400">{order.customer.email}</div>
+              <div className="text-sm font-medium text-slate-900">{order.customer?.name || 'Customer'}</div>
+              {order.customer?.email && (
+                <div className="text-xs text-slate-400">{order.customer.email}</div>
+              )}
             </div>
           </div>
-          {order.customer.phone && (
+          {order.customer?.phone && (
             <div className="flex items-start gap-3">
               <Phone className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
               <div>
@@ -342,16 +349,19 @@ export default function OrderWorkbenchPage() {
           <div className="flex items-start gap-3">
             <MapPin className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
             <div>
-              <div className="text-xs text-slate-500">Delivery Address</div>
+              <div className="text-xs text-slate-500">
+                Delivery Address {order.address?.label ? `(${order.address.label})` : ''}
+              </div>
               <div className="text-sm font-medium text-slate-900">
-                {order.address.line1}
-                {order.address.line2 ? `, ${order.address.line2}` : ''}
+                {order.address?.street || 'No address provided'}
               </div>
-              <div className="text-xs text-slate-400">
-                {[order.address.city, order.address.province, order.address.postalCode]
-                  .filter(Boolean)
-                  .join(', ')}
-              </div>
+              {(order.address?.city || order.address?.postalCode) && (
+                <div className="text-xs text-slate-400">
+                  {[order.address?.city, order.address?.postalCode]
+                    .filter(Boolean)
+                    .join(', ')}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-start gap-3">
@@ -379,12 +389,12 @@ export default function OrderWorkbenchPage() {
               </div>
             </div>
           )}
-          {order.notes && (
+          {(order.customerNotes || order.notes) && (
             <div className="flex items-start gap-3 sm:col-span-2">
               <MessageSquare className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
               <div>
                 <div className="text-xs text-slate-500">Order Notes</div>
-                <div className="text-sm text-slate-700">{order.notes}</div>
+                <div className="text-sm text-slate-700">{order.customerNotes || order.notes}</div>
               </div>
             </div>
           )}
@@ -405,7 +415,7 @@ export default function OrderWorkbenchPage() {
             <Truck className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
             <div>
               <div className="text-xs text-slate-500">Driver</div>
-              <div className="text-sm font-medium text-slate-900">{order.delivery.driver.name}</div>
+              <div className="text-sm font-medium text-slate-900">{order.delivery.driver.name || 'Assigned Driver'}</div>
               {order.delivery.driver.phone && (
                 <a
                   href={`tel:${order.delivery.driver.phone}`}
@@ -423,13 +433,13 @@ export default function OrderWorkbenchPage() {
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100">
           <h2 className="text-sm font-semibold text-slate-900">
-            Items ({order.items.length})
+            Items ({items.length})
           </h2>
         </div>
 
         {order.status === 'PICKING' ? (
           <ul className="divide-y divide-slate-100">
-            {order.items.map((item) => (
+            {items.map((item) => (
               <ItemRow
                 key={item.id}
                 item={item}
@@ -440,19 +450,19 @@ export default function OrderWorkbenchPage() {
           </ul>
         ) : (
           <ul className="divide-y divide-slate-100">
-            {order.items.map((item) => {
+            {items.map((item) => {
               const isWeight = item.unitType === 'WEIGHT';
-              const unit = isWeight ? 'g' : item.product.unitLabel;
-              const lineTotal = convert(item.lineTotal, BASE_CURRENCY, currency);
+              const unit = isWeight ? 'g' : (item.product?.unitLabel || 'item');
+              const lineTotal = convert(item.lineTotal ?? 0, BASE_CURRENCY, currency);
               return (
                 <li key={item.id} className="px-5 py-3 flex justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-slate-900 truncate">
-                      {item.product.name}
+                      {item.product?.name || 'Item'}
                     </div>
                     <div className="text-xs text-slate-500 mt-0.5">
                       {item.quantityOrdered} {unit} ordered
-                      {item.quantityFulfilled !== undefined && item.quantityFulfilled !== item.quantityOrdered && (
+                      {item.quantityFulfilled !== undefined && item.quantityFulfilled !== null && item.quantityFulfilled !== item.quantityOrdered && (
                         <span className="ml-1 text-amber-600">· {item.quantityFulfilled} {unit} fulfilled</span>
                       )}
                       {item.substitutedProduct && (

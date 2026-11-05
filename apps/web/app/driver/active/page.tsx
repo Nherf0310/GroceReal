@@ -533,12 +533,12 @@ export default function DriverActivePage() {
                   <div className="font-semibold text-slate-900 text-sm">
                     {delivery.order?.address?.street}, {delivery.order?.address?.city}
                   </div>
-                  {delivery.order?.address?.notes && (
+                  {(delivery.order?.customerNotes || delivery.order?.address?.notes) && (
                     <div className="flex items-start gap-1.5 text-slate-600 bg-amber-50/70 p-2 rounded-xl border border-amber-200/50">
                       <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                       <div>
                         <span className="font-semibold text-amber-900">Delivery Notes: </span>
-                        <span>{delivery.order.address.notes}</span>
+                        <span>{delivery.order?.customerNotes || delivery.order?.address?.notes}</span>
                       </div>
                     </div>
                   )}
