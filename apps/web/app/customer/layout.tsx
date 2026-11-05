@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/auth-context';
 import DashboardShell, { NavItem } from '../components/dashboard-shell';
+import { BasketProvider } from './basket-context';
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Shop', href: '/customer', icon: '🛒' },
@@ -37,5 +38,9 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
 
   if (!user || user.role !== 'CUSTOMER') return null;
 
-  return <DashboardShell navItems={NAV_ITEMS}>{children}</DashboardShell>;
+  return (
+    <BasketProvider>
+      <DashboardShell navItems={NAV_ITEMS}>{children}</DashboardShell>
+    </BasketProvider>
+  );
 }
