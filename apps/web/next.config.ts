@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   transpilePackages: ["@grocereal/shared"],
   experimental: {
-    turbopackPluginRuntimeStrategy: "workerThreads",
+    turbopackPluginRuntimeStrategy: "forceWorkerThreads",
   },
   turbopack: {
     rules: {
