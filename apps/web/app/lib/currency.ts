@@ -32,3 +32,4 @@ export function formatMoney(cents: number, currency: Currency = BASE_CURRENCY): 
     currency,
   }).format(amount);
 }
+
