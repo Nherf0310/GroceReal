@@ -53,6 +53,7 @@ export function usePolling(
       }
     };
 
+    void tick();
     timerId = setInterval(tick, intervalMs);
 
     const handleVisibilityChange = () => {

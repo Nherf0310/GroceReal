@@ -50,7 +50,10 @@ export default function DashboardShell({
         {/* Nav */}
         <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
           {navItems.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(item.href + '/');
+            const isBaseRoute = item.href === '/store' || item.href === '/customer' || item.href === '/driver';
+            const active = isBaseRoute
+              ? pathname === item.href
+              : (pathname === item.href || pathname.startsWith(item.href + '/'));
             return (
               <Link
                 key={item.href}
@@ -128,7 +131,10 @@ export default function DashboardShell({
             </div>
             <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
               {navItems.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(item.href + '/');
+                const isBaseRoute = item.href === '/store' || item.href === '/customer' || item.href === '/driver';
+                const active = isBaseRoute
+                  ? pathname === item.href
+                  : (pathname === item.href || pathname.startsWith(item.href + '/'));
                 return (
                   <Link
                     key={item.href}
