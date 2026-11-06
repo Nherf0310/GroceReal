@@ -65,7 +65,7 @@ export default function StoreOrdersPage() {
       list = list.filter(
         (o) =>
           o.id.toLowerCase().includes(q) ||
-          o.customer.name.toLowerCase().includes(q)
+          (o.customer?.name ? o.customer.name.toLowerCase().includes(q) : false)
       );
     }
 
@@ -188,8 +188,9 @@ export default function StoreOrdersPage() {
               const total = convert(order.total, BASE_CURRENCY, currency);
               const slot = order.deliverySlot;
               const slotStr = slot
-                ? `${new Date(slot.date).toLocaleDateString()} ${slot.startTime}–${slot.endTime}`
+                ? `${slot.date ? new Date(slot.date).toLocaleDateString() : ''} ${slot.startTime || ''}–${slot.endTime || ''}`.trim() || '—'
                 : '—';
+              const itemCount = order.items?.length ?? 0;
               return (
                 <li key={order.id}>
                   <Link
@@ -204,7 +205,7 @@ export default function StoreOrdersPage() {
                         <StatusBadge status={order.status} />
                       </div>
                       <div className="text-xs text-slate-500 mt-1">
-                        {order.customer.name} · {order.items.length} item{order.items.length !== 1 ? 's' : ''} · {slotStr}
+                        {order.customer?.name || 'Customer'} · {itemCount} item{itemCount !== 1 ? 's' : ''} · {slotStr}
                       </div>
                     </div>
                     <div className="flex items-center gap-4 shrink-0">

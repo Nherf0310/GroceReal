@@ -31,6 +31,7 @@ export interface DeliveryAddress {
   label?: string | null;
   street: string;
   city: string;
+  postalCode?: string | null;
   notes?: string | null;
 }
 
@@ -96,6 +97,7 @@ export interface ActiveDelivery {
     total: number;
     paymentMethod: string;
     paymentStatus: string;
+    customerNotes?: string | null;
     customer: DeliveryCustomer;
     store: DeliveryStore;
     address?: DeliveryAddress | null;
