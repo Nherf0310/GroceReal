@@ -16,6 +16,9 @@ interface RegisterForm {
   password: string;
   phone?: string;
   role: 'CUSTOMER' | 'STORE_MANAGER' | 'DRIVER';
+  storeName?: string;
+  storeAddress?: string;
+  storePhone?: string;
 }
 
 interface AuthState {

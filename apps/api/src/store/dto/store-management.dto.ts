@@ -154,11 +154,15 @@ export class CreateDeliverySlotDto {
 
 export class UpdateOrderStatusDto {
   @IsString()
-  status: string; // CONFIRMED | PICKING | READY_FOR_DELIVERY | CANCELLED
+  status: string; // CONFIRMED | REJECTED | PICKING | READY_FOR_DELIVERY
 
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 export class FulfillOrderItemDto {
@@ -169,4 +173,9 @@ export class FulfillOrderItemDto {
   @IsOptional()
   @IsString()
   substitutedProductId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  substituteQuantity?: number;
 }

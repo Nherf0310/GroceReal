@@ -15,6 +15,13 @@ export const clearToken = () => {
   }
 };
 
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export const apiFetch = async <T = unknown>(
   url: string,
   options: RequestInit = {}
@@ -36,8 +43,15 @@ export const apiFetch = async <T = unknown>(
   });
 
   if (!res.ok) {
+    const isAuthEndpoint = url.startsWith('/auth/login') || url.startsWith('/auth/register');
+    if (res.status === 401 && !isAuthEndpoint) {
+      clearToken();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    }
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message ?? `Request failed ${res.status}`);
+    throw new ApiError(res.status, (err as { message?: string }).message ?? `Request failed ${res.status}`);
   }
   return res.json();
 };
