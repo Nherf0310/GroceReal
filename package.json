@@ -16,11 +16,12 @@
     "build:web": "npm run build --workspace=@grocereal/web",
     "build": "npm run prisma:generate && npm run build:shared && npm run build:api",
     "lint": "npm run lint --workspaces --if-present",
-    "prisma:generate": "npx prisma generate",
-    "prisma:migrate": "npx prisma migrate dev",
-    "prisma:push": "npx prisma db push",
-    "prisma:seed": "npx prisma db seed",
-    "prisma:studio": "npx prisma studio"
+    "postinstall": "npm run prisma:generate",
+    "prisma:generate": "npx prisma generate --schema=apps/api/prisma/schema.prisma",
+    "prisma:migrate": "npx prisma migrate dev --schema=apps/api/prisma/schema.prisma",
+    "prisma:push": "npx prisma db push --schema=apps/api/prisma/schema.prisma",
+    "prisma:seed": "npx tsx apps/api/prisma/seed.ts",
+    "prisma:studio": "npx prisma studio --schema=apps/api/prisma/schema.prisma"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
